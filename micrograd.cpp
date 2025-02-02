@@ -7,6 +7,7 @@
 #include <cassert>
 #include <vector>
 #include <unordered_set>
+#include <random>
 
 class Value;
 
@@ -70,6 +71,53 @@ public:
         return out;
     }
 
+    // out = base^exponent
+    // dL/d(base) = dL/d(out) * d(out)/d(base)
+    //            = out->grad * exponent * base^(exponent - 1) basic power rule here
+
+    static ValuePtr pow(const ValuePtr& base, float exponent) {
+        float newValue = std::pow(base->data, exponent);
+        auto out = Value::create(newValue, "^");
+        out->prev = {base};
+        out->backward = [base_weak = std::weak_ptr<Value>(base), out_weak = std::weak_ptr<Value>(out), exponent](){
+            if (auto base = base_weak.lock()) {
+                base->grad += exponent * std::pow(base->data, exponent-1) * out_weak.lock()-> grad;
+            }
+        };
+        return out;
+    }
+
+    static ValuePtr divide(const ValuePtr& lhs, const ValuePtr& rhs) {
+        auto reciprocal = pow(rhs, -1); // Division is multiplication of the reciprocal, very easy
+        return multiply(lhs, reciprocal);
+    }
+
+
+    // Activation Function / Rectified Linear Unit
+    // Whenever x > 0 it's value is = x , whenever x < 0 it's value is = 0 grad is 1 when x=x and 0 when x=0
+    static ValuePtr relu(const ValuePtr& input) {
+        float val = std::max(0.0f, input->data);
+        auto out = Value::create(val, "ReLU");
+        out->prev = {input};
+        out-> backward = [input, out](){
+            // 8 *out_grad
+            // local_grad * out_grad
+            if (input) input-> grad += (out->data > 0) * out->grad; // whenever y<=0 then grad =1 and grad =0 in all toher cases
+        };
+        return out;
+    }
+
+    static ValuePtr sigmoid(const ValuePtr& input) {
+        float x = input->data;
+        float t = std::exp(x) / (1 + std::exp(x));
+        auto out = Value::create(t, "Sigmoid");
+        out->prev = {input};
+        out->backward = [input, out, t](){
+            input->grad += t * (1-t) * out->grad;
+        };
+        return out;
+    }
+
     void buildTopo(std::shared_ptr<Value> v, std::unordered_set<std::shared_ptr<Value>, Hash>& visited, std::vector<std::shared_ptr<Value>>& topo){
         if(visited.find(v) == visited.end()){ // checking to see if current value has been visited
             visited.insert(v);
@@ -91,8 +139,7 @@ public:
             if((*it) -> backward) {
                 (*it)-> backward();
             }
-            (*it)->print();
-        }
+        };
     }
     void print(){
         std::cout << "[data=" << this->data << ", grad=" << this-> grad << "]\n";
@@ -100,34 +147,161 @@ public:
 };
 
 size_t Hash::operator()(const ValuePtr value) const {
-    return std::hash<std::string>()(value.get()->op) ^ std::hash<float>()(value.get()->data);  // Using only the operation string as the hash key
+    return std::hash<size_t>()(value->id) ^ std::hash<std::string>()(value->op);// Using only the operation string as the hash key
 }
 
+enum ActivationType {
+    RELU, 
+    SIGMOID
+};
 
+class Activation {
+    static std::shared_ptr<Value> Relu(const std::shared_ptr<Value>& val){
+        return Value::relu(val);
+    }
+    static std::shared_ptr<Value> Sigmoid(const std::shared_ptr<Value>& val){
+        return Value::sigmoid(val);
+    }
+
+public:
+    static inline std::unordered_map<ActivationType, std::shared_ptr<Value>(*)(const std::shared_ptr<Value>&)> mActivationFcn = {
+        {ActivationType::RELU, &Relu},
+        {ActivationType::SIGMOID, &Sigmoid}
+    };
+};
+
+
+float getRandomFloat() {
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    static std::uniform_real_distribution<> dis(-1, 1);
+    return dis(gen);
+}
+
+class Neuron {
+private:
+    std::vector<ValuePtr> weights; // weights per neuron
+    ValuePtr bias = Value::create(0.0); // bias 
+    const ActivationType activation_t; // activation type (function)
+
+public:
+    Neuron(size_t nin, const ActivationType& activation_t) : activation_t(activation_t) {
+        for (size_t idx = 0; idx < nin; ++idx) { // takes an input so we know the length of the vector of weights
+            weights.emplace_back(Value::create(getRandomFloat())); // need to know the activation type as well
+        } // initialize the weights
+    }
+
+    // Testing
+    Neuron(size_t nin, float val, const ActivationType& activation_t = ActivationType::SIGMOID) : activation_t(activation_t) {
+        for (size_t idx = 0; idx < nin; ++idx) {
+            weights.emplace_back(Value::create(getRandomFloat()));
+        }
+    }
+
+    void zeroGrad() {
+        for (auto& weight : weights){
+            weight->grad = 0;
+        }
+        bias->grad = 0;
+    }
+
+
+    // Dot Product of a Neuron's weights with the input
+    ValuePtr operator()(const std::vector<ValuePtr>& x) { // takes vector as an input
+        if (x.size() != weights.size()) {
+            throw std::invalid_argument("Vectors must be of the same length"); // checks if the size of the input = size of the weights
+        }
+
+        ValuePtr sum = Value::create(0.0); // contains our dot product, of both vectors
+
+        for (size_t idx = 0; idx < weights.size(); ++idx) {
+            // Dot Product calculation
+            ValuePtr intermediateVal = Value::multiply(x[idx], weights[idx]);
+            sum = Value::add(sum, intermediateVal);
+        }
+
+        // Add Bias to our sum bias is always 0 but customizeable
+        sum = Value::add(sum, bias);
+
+        // Applying our Activation Function
+        const auto& activationFcn = Activation::mActivationFcn.at(activation_t); // look at activation type which is initialized through our constructor
+        return activationFcn(sum);
+    }
+
+    std::vector<ValuePtr> parameters() const { // returns all parameters, utility function for now
+        std::vector<ValuePtr> out;
+        out.reserve(weights.size() + 1);
+
+        out.insert(out.end(), weights.begin(), weights.end());
+        out.push_back(bias);
+
+        return out;
+    }
+
+    void printParameters() const {
+        printf("Number of Parameters: %zu\n", weights.size() + 1);
+        for (const auto& param : weights) {
+            printf("%f, %f\n", param->data, param->grad);
+        }
+        printf("%f, %f\n", bias->data, bias->grad);
+        printf("\n");
+    }
+
+    size_t getParametersSize() const {
+        return weights.size() + 1;
+    }
+};
+
+class Layer {
+    std::vector<Neuron> neurons;
+public:
+    Layer(size_t dimOfNeuron, size_t numNeurons, const ActivationType& actType = ActivationType::RELU) {
+        for(size_t idx= 0; idx < numNeurons; ++idx){
+            this->neurons.emplace_back(dimOfNeuron, actType);
+        }
+    }
+
+    std::vector<ValuePtr> operator()(const std::vector<ValuePtr>& x) {
+        std::vector<ValuePtr> out;
+        out.reserve(this->neurons.size()); // reserves the output for each neuron
+        std::for_each(this->neurons.begin(), this->neurons.end(), [&out, x = x](auto neuron)mutable {
+            out.emplace_back(neuron(x)); // if x is an input basically we use the x value for each neuron and calculate the output
+        });
+        return out;
+    }
+
+    void zeroGrad() {
+        for(auto& neuron : this->neurons) {
+            neuron.zeroGrad();
+        }
+    }
+
+    std::vector<Value*> parameters() const{
+        std::vector<Value*> params;
+        if(params.empty()) {
+            for(const auto& neuron : neurons){
+                for(const auto& p : neuron.parameters()) {
+                    params.push_back(p.get());
+                }
+            };
+        };
+        return params;
+    }
+    
+    void print() {
+        const auto params = this-> parameters();
+        printf("Num parameters: %d\n", (int)params.size());
+        for(const auto& p : params) {
+            std::cout << &p << " ";
+            printf("[data=%f,grad=%lf]\n", p->data, p->grad);
+        }
+        printf("\n");
+    }
+
+};
 
 int main()
 {
-    auto a = Value::create(1.0, "");
-    auto b = Value::create(2.0, "");
-    auto c = Value::add(a, b);
-
-    auto d = Value::multiply(c, c);
-
-    assert(c->data == 3.0);
-    assert(c->op == "+");
-
-    assert(d->data == 9.0);
-    assert(d->op == "*");
-
-    auto loss = Value::add(d, d);
-
-    loss->backProp();
-    // auto d = subtract(a-b)
-
-    // auto e = multiply(c*d)
-
-    // a -->
-    //        +  --> c --> op --> L dL/da = b * dL/dc
-    // b -->
-    // auto a = std::shared_ptr<Value>();
+   Layer l1(4, 2);
+   l1.print();
 }
