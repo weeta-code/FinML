@@ -8,19 +8,22 @@
 #include <vector>
 #include <unordered_set>
 #include <random>
+#include <atomic> 
 
 class Value;
 
 using ValuePtr = std::shared_ptr<Value>;
 
 struct Hash {
-    size_t operator()(const ValuePtr value) const;
+    size_t operator()(const ValuePtr value) const{
+        return std::hash<size_t>()(value->id);
+    }
 };
 // Skeleton Class to be built upon at the moment
 class Value : public std::enable_shared_from_this<Value> // Deriving from a shared class because of a shared pointer
 {
 public:
-    inline static size_t currentID = 0; // Increments or Decrements whenever Value gets instantiated or Destroyed; Tracks number of nodes in graph
+    inline static std::atomic<size_t> currentID{0}; // Increments or Decrements whenever Value gets instantiated or Destroyed; Tracks number of nodes in graph
     float data; // value of class value ex. node a = -1 so data = -1
     float grad; // gradient of data member
     std::string op; // operator used to construct current node
@@ -29,16 +32,15 @@ public:
     std::function<void()> backward;
 
 private:
-    Value(float data, const std::string &op, size_t id) : data(data), op(op), id(id) {};
+    Value(float data, const std::string &op, size_t id) : data(data), op(op), id(id) {}; // gradient initialization to 0
 
 public:
     static ValuePtr create(float data, const std::string &op = "")
     {
-        return std::shared_ptr<Value>(new Value(data, op, Value::currentID++)); // Need to expose an API for client construction instead of direct construction, so client doesn't directly call constructur of value
+        return std::make_shared<Value>(data, op, currentID++); // Need to expose an API for client construction instead of direct construction, so client doesn't directly call constructur of value
     }
 
     ~Value(){
-        --Value::currentID;
     }
 
     static ValuePtr add(const ValuePtr& lhs, const ValuePtr& rhs){
@@ -118,11 +120,12 @@ public:
         return out;
     }
 
-    void buildTopo(std::shared_ptr<Value> v, std::unordered_set<std::shared_ptr<Value>, Hash>& visited, std::vector<std::shared_ptr<Value>>& topo){
-        if(visited.find(v) == visited.end()){ // checking to see if current value has been visited
-            visited.insert(v);
-            for(const auto& child : v->prev){ // then looking at it's children
-                buildTopo(child, visited, topo); // topologically sorted graph
+    void buildTopo(std::shared_ptr<Value> v, 
+                  std::unordered_set<std::shared_ptr<Value>, Hash>& visited,
+                  std::vector<std::shared_ptr<Value>>& topo) {
+        if(visited.insert(v).second) {  // More efficient insertion check
+            for(const auto& child : v->prev) {
+                buildTopo(child, visited, topo);
             }
             topo.push_back(v);
         }
@@ -174,7 +177,7 @@ public:
 float getRandomFloat() {
     static std::random_device rd;
     static std::mt19937 gen(rd());
-    static std::uniform_real_distribution<> dis(-1, 1);
+    static std::uniform_real_distribution<> dis(-.1, .1);
     return dis(gen);
 }
 
@@ -185,10 +188,13 @@ private:
     const ActivationType activation_t; // activation type (function)
 
 public:
-    Neuron(size_t nin, const ActivationType& activation_t) : activation_t(activation_t) {
-        for (size_t idx = 0; idx < nin; ++idx) { // takes an input so we know the length of the vector of weights
-            weights.emplace_back(Value::create(getRandomFloat())); // need to know the activation type as well
-        } // initialize the weights
+    Neuron(size_t nin, const ActivationType& activation_t) 
+        : activation_t(activation_t), 
+          bias(Value::create(getRandomFloat())) {  // Initialize bias with small random
+        weights.reserve(nin);
+        for (size_t idx = 0; idx < nin; ++idx) {
+            weights.emplace_back(Value::create(getRandomFloat()));
+        }
     }
 
     // Testing
@@ -231,8 +237,7 @@ public:
     std::vector<ValuePtr> parameters() const { // returns all parameters, utility function for now
         std::vector<ValuePtr> out;
         out.reserve(weights.size() + 1);
-
-        out.insert(out.end(), weights.begin(), weights.end());
+        out = weights; ;
         out.push_back(bias);
 
         return out;
@@ -255,18 +260,20 @@ public:
 class Layer {
     std::vector<Neuron> neurons;
 public:
-    Layer(size_t dimOfNeuron, size_t numNeurons, const ActivationType& actType = ActivationType::RELU) {
-        for(size_t idx= 0; idx < numNeurons; ++idx){
-            this->neurons.emplace_back(dimOfNeuron, actType);
+    Layer(size_t dimOfNeuron, size_t numNeurons, 
+         const ActivationType& actType = ActivationType::RELU) {
+        neurons.reserve(numNeurons);  // Pre-allocate memory
+        for(size_t idx=0; idx<numNeurons; ++idx){
+            neurons.emplace_back(dimOfNeuron, actType);
         }
     }
 
     std::vector<ValuePtr> operator()(const std::vector<ValuePtr>& x) {
         std::vector<ValuePtr> out;
-        out.reserve(this->neurons.size()); // reserves the output for each neuron
-        std::for_each(this->neurons.begin(), this->neurons.end(), [&out, x = x](auto neuron)mutable {
-            out.emplace_back(neuron(x)); // if x is an input basically we use the x value for each neuron and calculate the output
-        });
+        out.reserve(neurons.size());
+        for(auto& neuron : neurons) {  // More efficient than std::for_each
+            out.emplace_back(neuron(x));
+        }
         return out;
     }
 
