@@ -16,6 +16,16 @@ using ValuePtr = std::shared_ptr<Value>;
 struct Hash {
     size_t operator()(const ValuePtr value) const;
 };
+static ValuePtr dot(const std::vector<ValuePtr>& a, const std::vector<ValuePtr>& b) {
+    if (a.size() != b.size()) {
+        throw std::invalid_argument("Vectors must be of the same length");
+    }
+    ValuePtr result = Value::create(0.0);
+    for (size_t i = 0; i < a.size(); ++i) {
+        result = Value::add(result, Value::multiply(a[i], b[i]));
+    }
+    return result;
+}
 // Skeleton Class to be built upon at the moment
 class Value : public std::enable_shared_from_this<Value> // Deriving from a shared class because of a shared pointer
 {
@@ -118,6 +128,16 @@ public:
         return out;
     }
 
+    static ValuePtr tanh(const ValuePtr& input) {
+        float t = std::tanh(input->data);
+        auto out = Value::create(t, "tanh");
+        out->prev = {input};
+        out->backward = [input, out, t]() {
+            input->grad += (1 - t * t) * out->grad;
+        };
+        return out;
+    }
+
     void buildTopo(std::shared_ptr<Value> v, std::unordered_set<std::shared_ptr<Value>, Hash>& visited, std::vector<std::shared_ptr<Value>>& topo){
         if(visited.find(v) == visited.end()){ // checking to see if current value has been visited
             visited.insert(v);
@@ -152,7 +172,8 @@ size_t Hash::operator()(const ValuePtr value) const {
 
 enum ActivationType {
     RELU, 
-    SIGMOID
+    SIGMOID,
+    TANH
 };
 
 class Activation {
@@ -161,6 +182,9 @@ class Activation {
     }
     static std::shared_ptr<Value> Sigmoid(const std::shared_ptr<Value>& val){
         return Value::sigmoid(val);
+    }
+    static std::shared_ptr<Value> Tanh(const std::shared_ptr<Value>& val){
+        return Value::tanh(val);
     }
 
 public:
@@ -212,13 +236,7 @@ public:
             throw std::invalid_argument("Vectors must be of the same length"); // checks if the size of the input = size of the weights
         }
 
-        ValuePtr sum = Value::create(0.0); // contains our dot product, of both vectors
-
-        for (size_t idx = 0; idx < weights.size(); ++idx) {
-            // Dot Product calculation
-            ValuePtr intermediateVal = Value::multiply(x[idx], weights[idx]);
-            sum = Value::add(sum, intermediateVal);
-        }
+        ValuePtr sum = dot(x, weights);
 
         // Add Bias to our sum bias is always 0 but customizeable
         sum = Value::add(sum, bias);
@@ -300,8 +318,24 @@ public:
 
 };
 
+class LSTMCell {
+    // Each parameter being a vector of ValuePtrs
+    std::vector<std::vector<ValuePtr>> W_i, U_i; ValuePtr b_i;
+    std::vector<std::vector<ValuePtr>> W_f, U_f; ValuePtr b_f;
+    std::vector<std::vector<ValuePtr>> W_o, U_o; ValuePtr b_o;
+    std::vector<std::vector<ValuePtr>> W_g, U_g; ValuePtr b_g;
+
+    int inputSize;
+    int hiddenSize;
+
+    LSTMCell(int inputSize, int hiddenSize) : inputSize(inputSize), hiddenSize(hiddenSize) {
+        
+    }
+
+};
+
 int main()
 {
-   Layer l1(4, 2);
+   Layer l1(100, 20);
    l1.print();
 }
