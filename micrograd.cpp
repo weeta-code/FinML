@@ -329,10 +329,19 @@ class LSTMCell {
     int hiddenSize;
 
     LSTMCell(int inputSize, int hiddenSize) : inputSize(inputSize), hiddenSize(hiddenSize) {
+        W_i.emplace_back(Value::create(getRandomFloat()));
+        U_i.emplace_back(Value::create(getRandomFloat()));
+        W_f.emplace_back(Value::create(getRandomFloat()));
+        U_f.emplace_back(Value::create(getRandomFloat()));
+        W_o.emplace_back(Value::create(getRandomFloat()));
+        U_o.emplace_back(Value::create(getRandomFloat()));
+        W_g.emplace_back(Value::create(getRandomFloat()));
+        U_g.emplace_back(Value::create(getRandomFloat()));
+
         
     }
 
-};
+}; 
 
 int main()
 {
