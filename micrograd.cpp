@@ -164,6 +164,11 @@ public:
     void print(){
         std::cout << "[data=" << this->data << ", grad=" << this-> grad << "]\n";
     }
+    void gradientCheck(const ValuePtr& node, float eps = 1e-4) {
+        float original = node->data;
+        node->data += eps;
+       // float loss_plus = computeLoss();
+    }
 };
 
 size_t Hash::operator()(const ValuePtr value) const {
