@@ -35,20 +35,23 @@ public:
         sequence_length(sequence_length),
         num_layers(num_layers),
         model("StockLSTM") {
+
+        float weight_scale = 1.0f / std::sqrt(input_size);
         
         // Build the model
         // First LSTM layer
-        auto lstm1 = std::make_shared<finml::nn::LSTM>(input_size, hidden_size, true, "LSTM1");
+        auto lstm1 = std::make_shared<finml::nn::LSTM>(input_size, hidden_size, true, "LSTM1", weight_scale);
         model.add(lstm1);
         
         // Additional LSTM layers
         for (size_t i = 1; i < num_layers; ++i) {
-            auto lstm = std::make_shared<finml::nn::LSTM>(hidden_size, hidden_size, true, "LSTM" + std::to_string(i+1));
+            auto lstm = std::make_shared<finml::nn::LSTM>(hidden_size, hidden_size, true, "LSTM" + std::to_string(i+1), weight_scale);
             model.add(lstm);
         }
+
         
         // Final linear layer for prediction
-        auto linear = std::make_shared<finml::nn::Linear>(hidden_size, 1, true, "OutputLayer");
+        auto linear = std::make_shared<finml::nn::Linear>(hidden_size, 1, true, "OutputLayer", 0.01f);
         model.add(linear);
         
         // Print model structure
@@ -162,25 +165,28 @@ public:
     std::vector<double> predict(const std::vector<std::vector<std::vector<double>>>& X_test) {
         std::vector<double> predictions;
         predictions.reserve(X_test.size());
-        
-        for (size_t i = 0; i < X_test.size(); ++i) {
-            // Convert data to Matrix format
+
+        const size_t batch_size = 32; // limit how many samples can be processed at once
+        for (size_t i = 0; i < X_test.size(); i += batch_size) {
+            size_t current_batch_size = std::min(batch_size, X_test.size() - i);
+
+        for (size_t j = 0; j < current_batch_size; ++j) {
             finml::core::Matrix output;
             for (size_t t = 0; t < sequence_length; ++t) {
                 // Create a column vector for the current time step
                 finml::core::Matrix x(input_size, 1);
                 for (size_t f = 0; f < input_size; ++f) {
-                    x.at(f, 0) = finml::core::Value::create(static_cast<float>(X_test[i][t][f]));
+                    x.at(f, 0) = finml::core::Value::create(static_cast<float>(X_test[i + j][t][f]));
                 }
                 // Forward pass for the current time step; the LSTM updates its state internally.
                 output = model.forward(x);
             }
-            
-            
             // Get prediction
             double prediction = output.at(0, 0)->data;
             predictions.push_back(prediction);
         }
+        
+    }
         
         return predictions;
     }
@@ -272,26 +278,25 @@ void runStockPredictionExample() {
     
     // Normalize data
     auto [close_mean, close_std] = apple_data.normalizeZScore("close");
-    apple_data.normalizeZScore("volume");
     
     // Split data
     auto [train_data, test_data] = apple_data.trainTestSplit(0.8);
     
     // Prepare sequences
     auto [X_train, y_train] = train_data.createSequences(
-        30, "close", {"open", "high", "low", "close", "volume", "SMA_20", "RSI_14"}
+        30, "close", {"open", "high", "low", "close", "volume", "SMA_20", "RSI_14"}  // Add overlap parameter to increase effective samples
     );
     
     auto [X_test, y_test] = test_data.createSequences(
-        30, "close", {"open", "high", "low", "close", "volume", "SMA_20", "RSI_14"}
+        30, "close", {"open", "high", "low", "close", "volume", "SMA_20", "RSI_14"} // overlap parameter to increase effective samples
     );
     
     // Create and train model
     size_t input_size = X_train[0][0].size();  // Number of features
-    LSTMStockPredictor predictor(input_size, 64, 30, 2);
+    LSTMStockPredictor predictor(input_size, 32, 20, 2); // Reduced hidden_size and sequence_length
     
     std::cout << "Training LSTM model..." << std::endl;
-    predictor.train(X_train, y_train, 20, 0.001, 32);
+    predictor.train(X_train, y_train, 20, 0.0001, 32);
     
     // Evaluate model
     std::cout << "Evaluating model..." << std::endl;
@@ -321,4 +326,4 @@ void runStockPredictionExample() {
 int main() {
     runStockPredictionExample();
     return 0;
-} 
+}
