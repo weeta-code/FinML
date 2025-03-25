@@ -40,12 +40,12 @@ public:
         
         // Build the model
         // First LSTM layer
-        auto lstm1 = std::make_shared<finml::nn::LSTM>(input_size, hidden_size, true, "LSTM1", weight_scale);
+        auto lstm1 = std::make_shared<finml::nn::LSTM>(input_size, hidden_size, true, "LSTM1");
         model.add(lstm1);
         
         // Additional LSTM layers
         for (size_t i = 1; i < num_layers; ++i) {
-            auto lstm = std::make_shared<finml::nn::LSTM>(hidden_size, hidden_size, true, "LSTM" + std::to_string(i+1), weight_scale);
+            auto lstm = std::make_shared<finml::nn::LSTM>(hidden_size, hidden_size, true, "LSTM" + std::to_string(i+1));
             model.add(lstm);
         }
 
