@@ -262,4 +262,126 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request. 
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+# Stock Trading Model with LSTM and CNN
+
+The included demo demonstrates a hybrid stock trading model that combines LSTM (Long Short-Term Memory) networks for time series price prediction and CNN (Convolutional Neural Network) for chart pattern recognition. The demo uses Apple (AAPL) stock data from 2023-2024.
+
+## Components
+
+### 1. Time Series Data Handling
+
+The `TimeSeries` class in `finml::data` provides functionality for:
+- Loading stock price data from CSV files
+- Calculating technical indicators (SMA, RSI, MACD)
+- Normalizing data
+- Creating sequences for LSTM training
+- Detecting patterns in the data
+
+### 2. LSTM Model for Price Prediction
+
+The LSTM model:
+- Takes sequences of price data as input (Open, High, Low, Close, Volume, technical indicators)
+- Predicts future price movements
+- Uses multiple stacked LSTM layers for deep pattern recognition
+- Outputs a predicted price for the next N days
+
+### 3. CNN Model for Pattern Recognition
+
+The CNN model:
+- Takes price chart images as input
+- Identifies common chart patterns (double tops/bottoms, head and shoulders, flags, etc.)
+- Classifies patterns as bullish or bearish
+- Provides a confidence score for the identified pattern
+
+### 4. Hybrid Trading Model
+
+The hybrid model:
+- Combines signals from both the LSTM and CNN models
+- Weighs signals based on configurable parameters
+- Adjusts trading decisions based on market volatility and risk tolerance
+- Generates BUY/SELL/HOLD signals with confidence levels
+- Tracks performance metrics (returns, win rate, Sharpe ratio, etc.)
+
+## Training Data Format
+
+### LSTM Training Data
+The LSTM model requires sequences of price and indicator data:
+
+```
+Input:
+  Sequence of N days, each with M features:
+  [
+    [open_1, high_1, low_1, close_1, volume_1, sma_1, rsi_1, ...],
+    [open_2, high_2, low_2, close_2, volume_2, sma_2, rsi_2, ...],
+    ...
+    [open_N, high_N, low_N, close_N, volume_N, sma_N, rsi_N, ...]
+  ]
+
+Output:
+  Target price (typically the close price of the next day)
+```
+
+### CNN Training Data
+The CNN model requires labeled chart images:
+
+```
+Input:
+  Chart image showing price action over a specific period
+  (typically represented as a Matrix of pixel values)
+
+Output:
+  Binary label: bullish (1) or bearish (0)
+  Pattern type (optional): double top, head and shoulders, etc.
+```
+
+## Performance Metrics
+
+The demo calculates and reports:
+- Total return
+- Win rate (percentage of profitable trades)
+- Maximum drawdown
+- Sharpe ratio
+- Alpha
+- Beta
+
+## Training the Models
+
+To train the LSTM model:
+- Historical price data is split into training and test sets
+- Data is normalized and sequences are created
+- The model is trained to minimize mean squared error between predicted and actual prices
+
+To train the CNN model:
+- Chart images are labeled as bullish or bearish based on the resulting price action
+- Images are split into training and test sets
+- The model is trained to minimize binary cross-entropy loss
+
+## How to Run the Demo
+
+1. Compile the project (make sure you have the necessary dependencies installed)
+2. Run the data loader to download AAPL stock data:
+   ```
+   ./bin/aapl_data_loader
+   ```
+3. Run the hybrid trading model demo:
+   ```
+   ./bin/hybrid_trading_model
+   ```
+
+## Notes on Real-World Application
+
+In a real trading environment:
+- More extensive data preprocessing would be required
+- Model hyperparameters would need careful tuning
+- Additional risk management techniques should be implemented
+- Model performance should be regularly evaluated against new data
+- Transaction costs, slippage, and market impact would need to be considered
+
+## References and Further Reading
+
+1. Long Short-Term Memory Networks: [Understanding LSTM Networks](https://colah.github.io/posts/2015-08-Understanding-LSTMs/)
+2. CNN for Pattern Recognition: [Applying Deep Learning to Enhance Momentum Trading Strategies](https://arxiv.org/abs/1607.04318)
+3. Technical Analysis: [Encyclopedia of Chart Patterns](https://www.wiley.com/en-us/Encyclopedia+of+Chart+Patterns%2C+2nd+Edition-p-9780471668268)
+4. Performance Metrics: [Sharpe Ratio](https://www.investopedia.com/terms/s/sharperatio.asp) 

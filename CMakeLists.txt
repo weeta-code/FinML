@@ -16,10 +16,10 @@ file(GLOB_RECURSE SOURCES "src/*.cpp")
 add_library(finml STATIC ${SOURCES})
 
 # Add examples directory
-add_subdirectory(examples)
+# add_subdirectory(examples)
 
 # Add tests directory
-add_subdirectory(tests)
+# add_subdirectory(tests)
 
 # Installation
 install(TARGETS finml

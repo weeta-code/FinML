@@ -23,6 +23,8 @@ public:
     
     Matrix(size_t rows, size_t cols);
     Matrix(const std::initializer_list<std::initializer_list<float>>& init_list);
+
+    Matrix() = default;
     
     static Matrix random(size_t rows, size_t cols, float mean = 0.0f, float stddev = 1.0f);
     static Matrix zeros(size_t rows, size_t cols);

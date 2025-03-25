@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <numeric>
 #include <cmath>
+#include <memory>
 
 namespace finml {
 namespace core {
@@ -15,7 +16,7 @@ Value::~Value() {
 }
 
 ValuePtr Value::create(float data, const std::string& op) {
-    return std::make_shared<Value>(data, op, Value::currentID++);
+    return std::shared_ptr<Value>(new Value(data, op, Value::currentID++));
 }
 
 ValuePtr Value::add(const ValuePtr& lhs, const ValuePtr& rhs) {
@@ -299,23 +300,23 @@ void Value::gradientCheck(const ValuePtr& node, float eps) {
     std::cout << "Difference: " << std::abs(perturbed_grad - original_grad) << "\n";
 }
 ValuePtr Value::operator+(const ValuePtr& other) const {
-    return add(std::static_pointer_cast<Value>(shared_from_this()), other);
+    return add(std::const_pointer_cast<Value>(shared_from_this()), other);
 }
 
 ValuePtr Value::operator*(const ValuePtr& other) const {
-    return multiply(std::static_pointer_cast<Value>(shared_from_this()), other);
+    return multiply(std::const_pointer_cast<Value>(shared_from_this()), other);
 }
 
 ValuePtr Value::operator-(const ValuePtr& other) const {
-    return subtract(std::static_pointer_cast<Value>(shared_from_this()), other);
+    return subtract(std::const_pointer_cast<Value>(shared_from_this()), other);
 }
 
 ValuePtr Value::operator/(const ValuePtr& other) const {
-    return divide(std::static_pointer_cast<Value>(shared_from_this()), other);
+    return divide(std::const_pointer_cast<Value>(shared_from_this()), other);
 }
 
 ValuePtr Value::operator-() const {
-    return neg(std::static_pointer_cast<Value>(shared_from_this()));
+    return neg(std::const_pointer_cast<Value>(shared_from_this()));
 }
 
 size_t Hash::operator()(const ValuePtr& value) const {
