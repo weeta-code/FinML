@@ -51,7 +51,7 @@ public:
 
         
         // Final linear layer for prediction
-        auto linear = std::make_shared<finml::nn::Linear>(hidden_size, 1, true, "OutputLayer", 0.01f);
+        auto linear = std::make_shared<finml::nn::Linear>(hidden_size, 1, true, "OutputLayer");
         model.add(linear);
         
         // Print model structure
