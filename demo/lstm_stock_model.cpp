@@ -55,30 +55,23 @@ public:
         model.add(linear);
         
         // Print model structure
-        model.print();
-    }
+            model.print();
+        }
     
     void train(
         const std::vector<std::vector<std::vector<double>>>& X_train,
         const std::vector<double>& y_train,
-        size_t epochs = 80,
-        double learning_rate = 0.001,
+        size_t epochs = 20,
+        double learning_rate = 0.0001,
         size_t batch_size = 32
     ) {
-        // Create optimizer
         finml::optim::Adam optimizer(model.parameters(), learning_rate);
         
-        // Training loop
         size_t num_samples = X_train.size();
-        size_t batches = (num_samples + batch_size - 1) / batch_size; // Ceiling division
-        
-        std::cout << "Starting training with " << num_samples << " samples, " << batches << " batches" << std::endl;
-        
-        // Create vectors for tracking loss
-        std::vector<double> epoch_losses;
+        batch_size = std::min(batch_size, num_samples);
+        size_t batches = (num_samples + batch_size - 1) / batch_size;
         
         for (size_t epoch = 0; epoch < epochs; ++epoch) {
-            // Shuffle data
             std::vector<size_t> indices(num_samples);
             std::iota(indices.begin(), indices.end(), 0);
             std::random_device rd;
@@ -87,55 +80,43 @@ public:
             
             double epoch_loss = 0.0;
             
-            // Process batches
             for (size_t batch = 0; batch < batches; ++batch) {
-                // Reset gradients
                 model.zeroGrad();
                 
-                double batch_loss = 0.0;
                 size_t batch_start = batch * batch_size;
                 size_t batch_end = std::min((batch + 1) * batch_size, num_samples);
-                size_t batch_actual_size = batch_end - batch_start;
+                double batch_loss = 0.0;
                 
-                // Process each sample in the batch
                 for (size_t i = batch_start; i < batch_end; ++i) {
                     size_t idx = indices[i];
+                    finml::core::Matrix output;
                     
-        finml::core::Matrix output;
-        for (size_t t = 0; t < sequence_length; ++t) {
-        // Create a column vector for the current time step
-            finml::core::Matrix x(input_size, 1);
-            for (size_t f = 0; f < input_size; ++f) {
-            x.at(f, 0) = finml::core::Value::create(static_cast<float>(X_train[idx][t][f]));
-        }
-    // Forward pass for the current time step; the LSTM updates its hidden state internally.
-    output = model.forward(x);
-}
-// Now, 'output' holds the prediction from the final time step.
+                    
+                    // Process sequence
+                    for (size_t t = 0; t < sequence_length; ++t) {
+                        finml::core::Matrix x(input_size, 1);
+                        for (size_t f = 0; f < input_size; ++f) {
+                            x.at(f, 0) = finml::core::Value::create(static_cast<float>(X_train[idx][t][f]));
+                        }
+                        output = model.forward(x);
+                    }
                     
                     // Calculate loss
                     finml::core::Matrix target(1, 1);
                     target.at(0, 0) = finml::core::Value::create(static_cast<float>(y_train[idx]));
                     
-                    // Calculate MSE loss manually
                     finml::core::Matrix diff = output - target;
-                    finml::core::Matrix squared = diff * diff;
-                    finml::core::Matrix loss_val = squared;
-                    double sample_loss = loss_val.at(0, 0)->data;
-                    batch_loss += sample_loss;
+                    finml::core::Matrix loss = diff * diff;
+                    batch_loss += loss.at(0, 0)->data;
                     
                     // Backward pass
-                    loss_val.at(0, 0)->backward();
+                    loss.at(0, 0)->backward();
                 }
                 
-                // Update weights
                 optimizer.step();
-                
-                // Average batch loss
-                batch_loss /= batch_actual_size;
+                batch_loss /= (batch_end - batch_start);
                 epoch_loss += batch_loss;
                 
-                // Print progress for every 10 batches
                 if ((batch + 1) % 10 == 0 || batch == batches - 1) {
                     std::cout << "Epoch " << epoch + 1 << "/" << epochs 
                               << ", Batch " << batch + 1 << "/" << batches 
@@ -143,22 +124,8 @@ public:
                 }
             }
             
-            // Average epoch loss
             epoch_loss /= batches;
-            epoch_losses.push_back(epoch_loss);
-            
             std::cout << "Epoch " << epoch + 1 << "/" << epochs << " completed, Loss: " << epoch_loss << std::endl;
-        }
-        
-        // Save the loss history to a file
-        std::ofstream loss_file("lstm_loss_history.csv");
-        if (loss_file.is_open()) {
-            loss_file << "Epoch,Loss" << std::endl;
-            for (size_t i = 0; i < epoch_losses.size(); ++i) {
-                loss_file << i + 1 << "," << epoch_losses[i] << std::endl;
-            }
-            loss_file.close();
-            std::cout << "Loss history saved to lstm_loss_history.csv" << std::endl;
         }
     }
     
@@ -196,19 +163,46 @@ public:
             throw std::invalid_argument("Predictions and targets must have the same size");
         }
         
+        // Add validation checks
+        if (predictions.empty() || targets.empty()) {
+            throw std::invalid_argument("Empty predictions or targets");
+        }
+        
         double mse = 0.0;
+        size_t valid_pairs = 0;
+        
         for (size_t i = 0; i < predictions.size(); ++i) {
+            // Check for invalid values
+            if (std::isnan(predictions[i]) || std::isnan(targets[i])) {
+                continue;
+            }
             double error = predictions[i] - targets[i];
             mse += error * error;
+            valid_pairs++;
         }
-        mse /= predictions.size();
         
+        if (valid_pairs == 0) {
+            std::cerr << "No valid prediction-target pairs found" << std::endl;
+            return 0.0;
+        }
+        
+        mse /= valid_pairs;
         double rmse = std::sqrt(mse);
         
-        // Calculate average target value for percentage error
-        double avg_target = std::accumulate(targets.begin(), targets.end(), 0.0) / targets.size();
-        double percentage_error = (rmse / avg_target) * 100.0;
+        // Calculate percentage error with validation
+        double sum_targets = 0.0;
+        size_t valid_targets = 0;
+        for (const auto& target : targets) {
+            if (!std::isnan(target)) {
+                sum_targets += std::abs(target);
+                valid_targets++;
+            }
+        }
         
+        double avg_target = valid_targets > 0 ? sum_targets / valid_targets : 0.0;
+        double percentage_error = avg_target != 0.0 ? (rmse / avg_target) * 100.0 : 0.0;
+        
+        std::cout << "Valid samples: " << valid_pairs << "/" << predictions.size() << std::endl;
         std::cout << "MSE: " << mse << std::endl;
         std::cout << "RMSE: " << rmse << std::endl;
         std::cout << "Percentage Error: " << percentage_error << "%" << std::endl;
@@ -284,7 +278,9 @@ void runStockPredictionExample() {
     
     // Prepare sequences
     auto [X_train, y_train] = train_data.createSequences(
-        30, "close", {"open", "high", "low", "close", "volume", "SMA_20", "RSI_14"}  // Add overlap parameter to increase effective samples
+        20,  // Reduced sequence length
+        "close",
+        {"open", "high", "low", "close", "volume", "SMA_20", "RSI_14"}
     );
     
     auto [X_test, y_test] = test_data.createSequences(
@@ -293,7 +289,12 @@ void runStockPredictionExample() {
     
     // Create and train model
     size_t input_size = X_train[0][0].size();  // Number of features
-    LSTMStockPredictor predictor(input_size, 32, 20, 2); // Reduced hidden_size and sequence_length
+    LSTMStockPredictor predictor(
+        X_train[0][0].size(),  // input_size
+        16,                     // Reduced hidden_size
+        20,                     // Reduced sequence_length
+        2                      // Reduced number of layers
+    );
     
     std::cout << "Training LSTM model..." << std::endl;
     predictor.train(X_train, y_train, 20, 0.0001, 32);
