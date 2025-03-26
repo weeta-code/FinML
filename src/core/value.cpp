@@ -16,7 +16,9 @@ Value::~Value() {
 }
 
 ValuePtr Value::create(float data, const std::string& op) {
-    return std::shared_ptr<Value>(new Value(data, op, Value::currentID++));
+    Value* raw_ptr = new Value(data, op, Value::currentID++);
+    Value::createdValues.push_back(raw_ptr);
+    return std::shared_ptr<Value>(raw_ptr);
 }
 
 ValuePtr Value::add(const ValuePtr& lhs, const ValuePtr& rhs) {
@@ -321,6 +323,14 @@ ValuePtr Value::operator-() const {
 
 size_t Hash::operator()(const ValuePtr& value) const {
     return std::hash<size_t>()(value->id);
+}
+
+std::vector<Value*>& Value::getCreatedValues() {
+    return Value::createdValues;
+}
+
+void Value::clearCreatedValues() {
+    Value::createdValues.clear();
 }
 
 } // namespace core

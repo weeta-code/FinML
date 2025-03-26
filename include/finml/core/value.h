@@ -22,6 +22,7 @@ struct Hash {
 class Value : public std::enable_shared_from_this<Value> {
 public:
     inline static size_t currentID = 0;
+    inline static std::vector<Value*> createdValues;
 
     float data;
     float grad;
@@ -51,6 +52,10 @@ public:
     static ValuePtr tanh(const ValuePtr& input);
     static ValuePtr leakyRelu(const ValuePtr& input, float alpha = 0.01f);
     static ValuePtr softmax(const std::vector<ValuePtr>& inputs);
+    
+    // Memory management
+    static std::vector<Value*>& getCreatedValues();
+    static void clearCreatedValues();
 
     // Backpropagation
     void backProp();

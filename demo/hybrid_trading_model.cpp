@@ -6,6 +6,8 @@
 #include "finml/nn/sequential.h"
 #include "finml/core/matrix.h"
 #include "finml/optim/adam.h"
+#include "finml/optim/loss.h"
+#include "finml/core/value.h"
 #include <iostream>
 #include <vector>
 #include <memory>
@@ -17,6 +19,8 @@
 #include <random>
 #include <unordered_map>
 #include <chrono>
+#include <thread>
+#include <iomanip>
 
 // Forward declarations from the individual model files
 class LSTMStockPredictor {
@@ -26,11 +30,26 @@ private:
     size_t sequence_length;
     size_t num_layers;
     finml::nn::Sequential model;
+    unsigned int num_threads;
     
 public:
-    LSTMStockPredictor(size_t input_size, size_t hidden_size, size_t sequence_length = 30, size_t num_layers = 2);
-    void train(const std::vector<std::vector<std::vector<double>>>& X_train, const std::vector<double>& y_train, 
-               size_t epochs = 100, double learning_rate = 0.001, size_t batch_size = 32);
+    LSTMStockPredictor(
+        size_t input_size, 
+        size_t hidden_size, 
+        size_t sequence_length = 30, 
+        size_t num_layers = 2, 
+        unsigned int num_threads = std::thread::hardware_concurrency());
+        
+    void train(
+        const std::vector<std::vector<std::vector<double>>>& X_train,
+        const std::vector<double>& y_train, 
+        size_t epochs = 100,
+        double learning_rate = 0.001,
+        size_t batch_size = 32,
+        double validation_split = 0.1,
+        bool early_stopping = true,
+        size_t patience = 5);
+        
     std::vector<double> predict(const std::vector<std::vector<std::vector<double>>>& X_test);
     double evaluate(const std::vector<double>& predictions, const std::vector<double>& targets);
     std::vector<double> predictNextDays(const std::vector<std::vector<double>>& last_sequence, size_t num_days = 5);
@@ -391,29 +410,40 @@ void runHybridModelDemo() {
     std::vector<std::vector<std::vector<double>>> price_sequences;
     std::vector<finml::core::Matrix> chart_patterns;
     std::vector<double> volatilities;
+    std::vector<LabeledPattern> pattern_training_data;
     
     const size_t sequence_length = 30;
     const size_t num_features = 5;  // Open, High, Low, Close, Volume
-    const size_t num_days = 100;
+    const size_t num_days = 250;    // More days for better training
     
-    // Generate synthetic price data with a trend
+    // Generate synthetic price data with a trend and cycles
     double price = 150.0;  // Starting price for AAPL
-    double trend = 0.0005;  // Small upward trend
+    double trend = 0.0005; // Small upward trend
     double volatility = 0.01;  // 1% daily volatility
+    double cycle_amplitude = 5.0; // Price cycle amplitude
+    double cycle_period = 50.0;   // Price cycle period in days
     
     std::default_random_engine generator(static_cast<unsigned>(std::chrono::system_clock::now().time_since_epoch().count()));
     std::normal_distribution<double> distribution(0.0, 1.0);
     
+    std::cout << "Generating synthetic data for " << num_days << " days..." << std::endl;
+    
+    // Training data collections
+    std::vector<std::vector<std::vector<double>>> lstm_training_sequences;
+    std::vector<double> lstm_training_targets;
+    
     for (size_t day = 0; day < num_days; ++day) {
-        // Update price with trend and random noise
-        double daily_return = trend + volatility * distribution(generator);
+        // Add cyclical component to price
+        double cycle = cycle_amplitude * std::sin(2 * M_PI * day / cycle_period);
+        
+        // Update price with trend, cycle, and random noise
+        double daily_return = trend + (cycle - (day > 0 ? prices[day-1] : price)) / price + volatility * distribution(generator);
         price *= (1.0 + daily_return);
         
         prices.push_back(price);
         volatilities.push_back(volatility);
         
         // Create a sequence of the last 30 days of data
-        // For the first 30 days, we'll just repeat the initial price
         std::vector<std::vector<double>> sequence;
         
         for (size_t seq_day = 0; seq_day < sequence_length; ++seq_day) {
@@ -443,28 +473,108 @@ void runHybridModelDemo() {
         
         price_sequences.push_back(sequence);
         
-        // Create a synthetic chart pattern
+        // Create a synthetic chart pattern that correlates with future price movement
         finml::core::Matrix pattern(1, 200);
+        
+        // Determine if the pattern should be bullish or bearish based on future price movement
+        bool is_bullish;
+        if (day < num_days - 5) {
+            // Look 5 days ahead to determine if pattern is bullish or bearish
+            double future_return = (prices[std::min(day + 5, num_days - 1)] - price) / price;
+            is_bullish = future_return > 0;
+        } else {
+            // For the last few days, use the trend
+            is_bullish = trend > 0;
+        }
+        
+        // Create pattern with realistic chart shapes
         for (size_t i = 0; i < 200; ++i) {
-            // Create a pattern based on the day (some bullish, some bearish)
             float pattern_value;
-            if (day % 20 < 10) {
-                // Bullish pattern (upward trend)
-                pattern_value = static_cast<float>(i) / 200.0f + distribution(generator) * 0.05f;
+            float x = static_cast<float>(i) / 200.0f;
+            
+            if (is_bullish) {
+                // Bullish patterns: cup and handle, ascending triangle, etc.
+                if (day % 3 == 0) {
+                    // Cup and handle
+                    if (x < 0.4f) pattern_value = 1.0f - 0.5f * std::sin(x * 5.0f);
+                    else if (x < 0.7f) pattern_value = 0.7f + 0.3f * x;
+                    else pattern_value = 0.9f + 0.1f * std::sin((x - 0.7f) * 15.0f);
+                } else if (day % 3 == 1) {
+                    // Ascending triangle
+                    pattern_value = std::max(0.5f + 0.5f * x, 0.7f + 0.2f * std::sin(x * 10.0f));
+                } else {
+                    // Double bottom
+                    pattern_value = 0.7f + 0.3f * std::sin(x * 6.0f + M_PI);
+                }
             } else {
-                // Bearish pattern (downward trend)
-                pattern_value = 1.0f - static_cast<float>(i) / 200.0f + distribution(generator) * 0.05f;
+                // Bearish patterns: head and shoulders, descending triangle, etc.
+                if (day % 3 == 0) {
+                    // Head and shoulders
+                    if (x < 0.3f) pattern_value = 0.7f + 0.3f * std::sin(x * 10.0f);
+                    else if (x < 0.7f) pattern_value = 0.7f + 0.5f * std::sin((x - 0.3f) * 8.0f);
+                    else pattern_value = 0.7f + 0.3f * std::sin((x - 0.7f) * 10.0f);
+                } else if (day % 3 == 1) {
+                    // Descending triangle
+                    pattern_value = std::min(1.0f - 0.5f * x, 0.8f + 0.2f * std::sin(x * 10.0f));
+                } else {
+                    // Double top
+                    pattern_value = 0.7f + 0.3f * std::sin(x * 6.0f);
+                }
             }
+            
+            // Add some noise to make it realistic
+            pattern_value += distribution(generator) * 0.05f;
+            pattern_value = std::max(0.0f, std::min(1.0f, pattern_value));
+            
             pattern.at(0, i) = finml::core::Value::create(pattern_value);
         }
         
         chart_patterns.push_back(pattern);
+        
+        // Add to pattern training data with the appropriate label
+        if (day >= sequence_length) { // Only use data points with complete history
+            LabeledPattern labeled_pattern;
+            labeled_pattern.image = pattern;
+            labeled_pattern.is_bullish = is_bullish;
+            labeled_pattern.pattern_name = is_bullish ? "Bullish Pattern" : "Bearish Pattern";
+            pattern_training_data.push_back(labeled_pattern);
+            
+            // Add to LSTM training data
+            lstm_training_sequences.push_back(sequence);
+            if (day < num_days - 1) {
+                lstm_training_targets.push_back(prices[day + 1]); // Next day's price
+            } else {
+                lstm_training_targets.push_back(price); // Use current price for last day
+            }
+        }
     }
+    
+    std::cout << "Generated " << prices.size() << " days of price data" << std::endl;
+    std::cout << "LSTM training data: " << lstm_training_sequences.size() << " sequences" << std::endl;
+    std::cout << "CNN training data: " << pattern_training_data.size() << " patterns" << std::endl;
+    
+    // Split data into training and testing sets (80/20 split)
+    size_t train_size = static_cast<size_t>(price_sequences.size() * 0.8);
+    
+    std::vector<double> train_prices(prices.begin(), prices.begin() + train_size);
+    std::vector<double> test_prices(prices.begin() + train_size, prices.end());
+    
+    std::vector<std::vector<std::vector<double>>> train_sequences(price_sequences.begin(), price_sequences.begin() + train_size);
+    std::vector<std::vector<std::vector<double>>> test_sequences(price_sequences.begin() + train_size, price_sequences.end());
+    
+    std::vector<finml::core::Matrix> train_patterns(chart_patterns.begin(), chart_patterns.begin() + train_size);
+    std::vector<finml::core::Matrix> test_patterns(chart_patterns.begin() + train_size, chart_patterns.end());
+    
+    std::vector<double> train_volatilities(volatilities.begin(), volatilities.begin() + train_size);
+    std::vector<double> test_volatilities(volatilities.begin() + train_size, volatilities.end());
+    
+    std::vector<LabeledPattern> train_labeled_patterns(pattern_training_data.begin(), pattern_training_data.begin() + train_size);
+    std::vector<LabeledPattern> test_labeled_patterns(pattern_training_data.begin() + train_size, pattern_training_data.end());
     
     // Create and initialize the hybrid model
     HybridTradingModel hybrid_model(
         num_features,  // LSTM input size
-        64,            // LSTM hidden size
+        32,            // LSTM hidden size (smaller for faster training)
         sequence_length,
         1,             // CNN input channels
         60,            // CNN input height
@@ -474,19 +584,37 @@ void runHybridModelDemo() {
         0.7            // Risk tolerance (slightly aggressive)
     );
     
-    // Since we're using actual models, we would train them here
-    // For the demo, we'll skip actual training and focus on the trading logic
-    std::cout << "Note: This demo is using pre-trained models (placeholder)" << std::endl;
+    // Train the component models
+    std::cout << "\nTraining LSTM price prediction model..." << std::endl;
+    hybrid_model.trainLSTM(
+        train_sequences,
+        lstm_training_targets,
+        10,      // Reduced epochs for demo
+        0.001    // Learning rate
+    );
     
-    // Run backtest on synthetic data
-    std::cout << "\nRunning backtest on synthetic AAPL data..." << std::endl;
-    hybrid_model.backtest(prices, price_sequences, chart_patterns, volatilities);
+    std::cout << "\nTraining CNN pattern recognition model..." << std::endl;
+    hybrid_model.trainCNN(
+        train_labeled_patterns,
+        10,      // Reduced epochs for demo
+        0.001    // Learning rate
+    );
+    
+    // Run backtest on test data
+    std::cout << "\nRunning backtest on test data..." << std::endl;
+    hybrid_model.backtest(test_prices, test_sequences, test_patterns, test_volatilities);
     
     // Generate trading report
-    hybrid_model.generateReport("aapl_trading_report.txt");
+    hybrid_model.generateReport("hybrid_trading_report.txt");
 }
 
 int main() {
-    runHybridModelDemo();
+    try {
+        runHybridModelDemo();
+        std::cout << "Hybrid trading model demo completed successfully." << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
+    }
     return 0;
 } 

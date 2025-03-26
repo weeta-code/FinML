@@ -32,39 +32,100 @@ bool TimeSeries::loadFromCSV(const std::string& filename, bool has_header, const
         // Parse date
         std::getline(ss, token, ',');
         std::tm tm = {};
-        std::istringstream date_ss(token);
-        date_ss >> std::get_time(&tm, date_format.c_str());
-        if (date_ss.fail()) {
-            std::cerr << "Error: Failed to parse date: " << token << std::endl;
+        
+        // Default format is yyyy-MM-dd
+        if (date_format.empty() || date_format == "%Y-%m-%d") {
+            // Parse YYYY-MM-DD format manually
+            int year = 0, month = 0, day = 0;
+            
+            // Try to parse the date with more detailed error messages
+            std::string::size_type firstDash = token.find('-');
+            std::string::size_type secondDash = token.find('-', firstDash + 1);
+            
+            if (firstDash == std::string::npos || secondDash == std::string::npos) {
+                std::cerr << "Error: Failed to parse date '" << token << "', expected format 'YYYY-MM-DD'" << std::endl;
+                continue;
+            }
+            
+            try {
+                year = std::stoi(token.substr(0, firstDash));
+                month = std::stoi(token.substr(firstDash + 1, secondDash - firstDash - 1));
+                day = std::stoi(token.substr(secondDash + 1));
+                
+                // Validate the date components
+                if (year < 1900 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) {
+                    std::cerr << "Error: Invalid date components in '" << token << "': year=" << year
+                              << ", month=" << month << ", day=" << day << std::endl;
+                    continue;
+                }
+                
+                tm.tm_year = year - 1900; // Adjust year (tm_year is years since 1900)
+                tm.tm_mon = month - 1;    // Adjust month (tm_mon is 0-11)
+                tm.tm_mday = day;         // Day of month (1-31)
+            } catch (const std::exception& e) {
+                std::cerr << "Error: Failed to convert date components in '" << token 
+                          << "': " << e.what() << std::endl;
+                continue;
+            }
+        } else {
+            // Use the specified format
+            std::istringstream date_ss(token);
+            date_ss >> std::get_time(&tm, date_format.c_str());
+            if (date_ss.fail()) {
+                std::cerr << "Error: Failed to parse date: '" << token << "' with format '" << date_format << "'" << std::endl;
+                continue;
+            }
+        }
+        
+        // Default to noon to avoid timezone issues
+        tm.tm_hour = 12;
+        tm.tm_min = 0;
+        tm.tm_sec = 0;
+        
+        // Validate the parsed time
+        std::time_t time = std::mktime(&tm);
+        if (time == -1) {
+            std::cerr << "Error: Invalid date/time from '" << token << "'" << std::endl;
             continue;
         }
         
-        auto time_point = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+        auto time_point = std::chrono::system_clock::from_time_t(time);
         
-        // Parse OHLCV
-        TimeSeriesPoint point;
-        point.timestamp = time_point;
-        
-        std::getline(ss, token, ',');
-        point.open = std::stod(token);
-        
-        std::getline(ss, token, ',');
-        point.high = std::stod(token);
-        
-        std::getline(ss, token, ',');
-        point.low = std::stod(token);
-        
-        std::getline(ss, token, ',');
-        point.close = std::stod(token);
-        
-        std::getline(ss, token, ',');
-        point.volume = std::stod(token);
-        
-        // Add data point
-        data.push_back(point);
+        try {
+            // Parse OHLCV
+            TimeSeriesPoint point;
+            point.timestamp = time_point;
+            
+            std::getline(ss, token, ',');
+            point.open = std::stod(token);
+            
+            std::getline(ss, token, ',');
+            point.high = std::stod(token);
+            
+            std::getline(ss, token, ',');
+            point.low = std::stod(token);
+            
+            std::getline(ss, token, ',');
+            point.close = std::stod(token);
+            
+            std::getline(ss, token, ',');
+            point.volume = std::stod(token);
+            
+            // Add data point
+            data.push_back(point);
+        } catch (const std::exception& e) {
+            std::cerr << "Error parsing data: " << e.what() << " on line: " << line << std::endl;
+            continue;
+        }
     }
     
-    return true;
+    if (data.empty()) {
+        std::cerr << "Warning: No data points were loaded from " << filename << std::endl;
+    } else {
+        std::cout << "Successfully loaded " << data.size() << " data points from " << filename << std::endl;
+    }
+    
+    return !data.empty();
 }
 
 bool TimeSeries::saveToCSV(const std::string& filename) const {
