@@ -29,11 +29,21 @@ target_link_libraries(run_hybrid_trading_model finml)
 add_executable(lstm_options_arbitrage demo/lstm_options_arbitrage.cpp)
 target_link_libraries(lstm_options_arbitrage finml)
 
+# Add the simplified LSTM test
+add_executable(simplified_lstm_test demo/simplified_lstm_test.cpp)
+target_link_libraries(simplified_lstm_test finml)
+
+# Add the LSTM sequence test
+add_executable(lstm_sequence_test demo/lstm_sequence_test.cpp)
+target_link_libraries(lstm_sequence_test finml)
+
 # Add any dependencies (e.g., threading)
 find_package(Threads REQUIRED)
 target_link_libraries(finml Threads::Threads)
 target_link_libraries(run_hybrid_trading_model Threads::Threads)
 target_link_libraries(lstm_options_arbitrage Threads::Threads)
+target_link_libraries(simplified_lstm_test Threads::Threads)
+target_link_libraries(lstm_sequence_test Threads::Threads)
 
 # Copy data files to build directory
 file(COPY data/ DESTINATION ${CMAKE_BINARY_DIR}/data)
@@ -45,11 +55,19 @@ set_target_properties(run_hybrid_trading_model PROPERTIES
 set_target_properties(lstm_options_arbitrage PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
+set_target_properties(simplified_lstm_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+set_target_properties(lstm_sequence_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
 
 # Add compile options
 target_compile_options(finml PRIVATE -Wall -Wextra)
 target_compile_options(run_hybrid_trading_model PRIVATE -Wall -Wextra)
 target_compile_options(lstm_options_arbitrage PRIVATE -Wall -Wextra)
+target_compile_options(simplified_lstm_test PRIVATE -Wall -Wextra)
+target_compile_options(lstm_sequence_test PRIVATE -Wall -Wextra)
 
 # Print status
 message(STATUS "FinML project configured with C++${CMAKE_CXX_STANDARD}")

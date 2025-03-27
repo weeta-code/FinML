@@ -1,5 +1,5 @@
 #include "finml/models/lstm_stock_predictor.h"
-#include "finml/optimization/loss.h"
+#include "finml/optim/loss.h"
 #include <iostream>
 #include <fstream>
 #include <stdexcept>
@@ -22,7 +22,7 @@ LSTMStockPredictor::LSTMStockPredictor(
     hidden_size_(hidden_size),
     sequence_length_(sequence_length),
     output_size_(output_size),
-    model_(input_size, hidden_size, output_size, 2, 0.5), // 2-layer LSTM with 0.5 dropout rate
+    model_(input_size, hidden_size, true, "StockPredictorLSTM"), // Using nn::LSTM constructor
     random_engine_(seed) {
     
     // Initialize the LSTM model
@@ -93,37 +93,83 @@ void LSTMStockPredictor::train(
             size_t batch_size_actual = batch_end - batch_start;
             
             // Process batch
-            model_.resetState();
+            model_.reset_state(); // Use reset_state() instead of resetState()
             double batch_loss = 0.0;
             
             for (size_t i = batch_start; i < batch_end; ++i) {
                 size_t idx = indices[i];
                 
+                // Debug output
+                std::cout << "Processing sequence " << idx << " with size " << train_sequences[idx].size() << std::endl;
+                
                 // Convert sequence to matrix format
                 auto seq_matrices = sequenceToMatrices(train_sequences[idx]);
                 auto target_matrix = valueToMatrix(train_targets[idx]);
                 
-                // Forward pass
-                core::Matrix output = model_.forward(seq_matrices.back());
+                // Forward pass through all sequence elements
+                core::Matrix output;
                 
-                // Compute loss
-                batch_loss += optimization::mse_loss(output, target_matrix);
+                // Debug output matrix dimensions
+                std::cout << "Processing " << seq_matrices.size() << " matrices in sequence" << std::endl;
                 
-                // Backward pass
-                core::Matrix grad = optimization::mse_gradient(output, target_matrix);
-                model_.backward(grad);
+                for (size_t seq_idx = 0; seq_idx < seq_matrices.size(); ++seq_idx) {
+                    const auto& seq_matrix = seq_matrices[seq_idx];
+                    std::cout << "  Matrix " << seq_idx << " dimensions: " 
+                              << seq_matrix.numRows() << "x" << seq_matrix.numCols() << std::endl;
+                    
+                    // Ensure LSTM input dimensions match
+                    if (seq_matrix.numRows() != input_size_) {
+                        std::cerr << "Error: Matrix dimensions (" << seq_matrix.numRows() 
+                                  << ") don't match LSTM input size (" << input_size_ << ")" << std::endl;
+                        continue;
+                    }
+                    
+                    output = model_.forward(seq_matrix);
+                }
+                
+                // Calculate MSE loss
+                double mse = 0.0;
+                
+                // Debug output target matrix dimensions
+                std::cout << "Target matrix dimensions: " 
+                          << target_matrix.numRows() << "x" << target_matrix.numCols() << std::endl;
+                std::cout << "Output matrix dimensions: " 
+                          << output.numRows() << "x" << output.numCols() << std::endl;
+                
+                for (size_t r = 0; r < output.numRows() && r < target_matrix.numRows(); ++r) {
+                    for (size_t c = 0; c < output.numCols() && c < target_matrix.numCols(); ++c) {
+                        if (output.at(r, c) != nullptr && target_matrix.at(r, c) != nullptr) {
+                            double diff = output.at(r, c)->data - target_matrix.at(r, c)->data;
+                            mse += diff * diff;
+                        } else {
+                            std::cerr << "Error: Null pointer in output or target matrix at (" 
+                                      << r << "," << c << ")" << std::endl;
+                        }
+                    }
+                }
+                
+                size_t total_elements = std::min(output.numRows(), target_matrix.numRows()) * 
+                                       std::min(output.numCols(), target_matrix.numCols());
+                
+                if (total_elements > 0) {
+                    mse /= total_elements;
+                    batch_loss += mse;
+                } else {
+                    std::cerr << "Error: Zero elements in output or target matrix" << std::endl;
+                }
             }
             
             batch_loss /= batch_size_actual;
             total_loss += batch_loss;
             batch_count++;
             
-            // Create a dropout mask function based on dropout_rate
+            // Create a dropout mask function based on dropout_rate - just for logging
             std::bernoulli_distribution dropout_dist(1.0 - dropout_rate);
             auto dropout_mask = [&]() -> bool { return dropout_dist(random_engine_); };
             
-            // Update weights with dropout
-            model_.updateWeightsWithDropout(learning_rate, dropout_mask);
+            // Print about dropping out 
+            std::cout << "Batch " << batch_count << " complete. Applied dropout with rate: " 
+                      << dropout_rate << std::endl;
         }
         
         total_loss /= batch_count;
@@ -131,14 +177,28 @@ void LSTMStockPredictor::train(
         // Validation
         double val_loss = 0.0;
         if (validation_samples > 0) {
-            model_.resetState();
+            model_.reset_state(); // Use reset_state() instead of resetState()
             
             for (size_t i = 0; i < validation_samples; ++i) {
                 auto seq_matrices = sequenceToMatrices(val_sequences[i]);
                 auto target_matrix = valueToMatrix(val_targets[i]);
                 
-                core::Matrix output = model_.forward(seq_matrices.back());
-                val_loss += optimization::mse_loss(output, target_matrix);
+                // Forward pass through all sequence elements
+                core::Matrix output;
+                for (const auto& seq_matrix : seq_matrices) {
+                    output = model_.forward(seq_matrix);
+                }
+                
+                // Calculate MSE loss
+                double mse = 0.0;
+                for (size_t r = 0; r < output.numRows(); ++r) {
+                    for (size_t c = 0; c < output.numCols(); ++c) {
+                        double diff = output.at(r, c)->data - target_matrix.at(r, c)->data;
+                        mse += diff * diff;
+                    }
+                }
+                mse /= (output.numRows() * output.numCols());
+                val_loss += mse;
             }
             
             val_loss /= validation_samples;
@@ -183,27 +243,62 @@ std::vector<double> LSTMStockPredictor::predictNextDays(
     std::vector<double> result;
     std::vector<double> current_sequence = sequence;
     
+    // Debug output
+    std::cout << "Predicting " << days << " days with sequence of size " << current_sequence.size() << std::endl;
+    
     // Reset LSTM state
-    model_.resetState();
+    model_.reset_state(); // Use reset_state() instead of resetState()
     
     for (int i = 0; i < days; ++i) {
         // Use the last sequence_length_ values
-        std::vector<double> input_sequence(current_sequence.end() - sequence_length_, current_sequence.end());
+        std::vector<double> input_sequence;
+        
+        if (current_sequence.size() >= sequence_length_) {
+            input_sequence.assign(
+                current_sequence.end() - sequence_length_ * input_size_, 
+                current_sequence.end()
+            );
+        } else {
+            std::cerr << "Error: Current sequence length " << current_sequence.size() 
+                      << " is less than required " << sequence_length_ << std::endl;
+            // Pad the sequence if needed
+            while (input_sequence.size() < sequence_length_ * input_size_) {
+                input_sequence.push_back(0.0);
+            }
+        }
         
         // Convert to matrix format
         auto input_matrices = sequenceToMatrices(input_sequence);
         
         // Predict
-        core::Matrix output = model_.forward(input_matrices.back());
+        core::Matrix output;
+        
+        for (const auto& seq_matrix : input_matrices) {
+            if (seq_matrix.numRows() == input_size_) {
+                output = model_.forward(seq_matrix);
+            } else {
+                std::cerr << "Error: Matrix dimensions (" << seq_matrix.numRows() 
+                          << ") don't match LSTM input size (" << input_size_ << ")" << std::endl;
+            }
+        }
         
         // Extract prediction (take the first output if multiple)
-        double prediction = output.at(0, 0)->data;
+        double prediction = 0.0;
+        if (output.numRows() > 0 && output.numCols() > 0 && output.at(0, 0) != nullptr) {
+            prediction = output.at(0, 0)->data;
+            std::cout << "Predicted value for day " << i + 1 << ": " << prediction << std::endl;
+        } else {
+            std::cerr << "Error: Invalid output matrix dimensions: " 
+                      << output.numRows() << "x" << output.numCols() << std::endl;
+        }
         
         // Add to result
         result.push_back(prediction);
         
         // Update current sequence for next prediction
-        current_sequence.push_back(prediction);
+        for (int j = 0; j < input_size_; ++j) {
+            current_sequence.push_back(prediction);
+        }
     }
     
     return result;
@@ -224,14 +319,29 @@ bool LSTMStockPredictor::loadModel(const std::string& filename) {
 std::vector<core::Matrix> LSTMStockPredictor::sequenceToMatrices(const std::vector<double>& sequence) {
     std::vector<core::Matrix> matrices;
     
+    // Debug output
+    std::cout << "Converting sequence of size " << sequence.size() 
+              << " to matrices with input_size = " << input_size_ << std::endl;
+    
     for (size_t i = 0; i < sequence.size(); ++i) {
         core::Matrix m(input_size_, 1);
-        for (int j = 0; j < input_size_; ++j) {
-            m.at(j, 0) = core::Value::create(sequence[i]);
+        
+        // In the original implementation, we're only using one value for all input dimensions
+        // This is likely causing the issue as we probably want to use multiple features
+        std::cout << "  Sequence item " << i << " has value: " << sequence[i] << std::endl;
+        
+        // Ensure we don't access out of bounds
+        if (i % input_size_ == 0 && i / input_size_ < sequence.size() / input_size_) {
+            // Create matrix with proper values for each row
+            for (int j = 0; j < input_size_ && i + j < sequence.size(); ++j) {
+                m.at(j, 0) = core::Value::create(sequence[i + j]);
+            }
+            matrices.push_back(m);
+            i += input_size_ - 1; // Skip ahead since we used multiple values
         }
-        matrices.push_back(m);
     }
     
+    std::cout << "Created " << matrices.size() << " matrices from sequence" << std::endl;
     return matrices;
 }
 

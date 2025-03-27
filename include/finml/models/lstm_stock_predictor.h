@@ -1,7 +1,7 @@
 #ifndef FINML_MODELS_LSTM_STOCK_PREDICTOR_H
 #define FINML_MODELS_LSTM_STOCK_PREDICTOR_H
 
-#include "finml/models/lstm.h"
+#include "finml/nn/lstm.h"
 #include "finml/core/matrix.h"
 #include <vector>
 #include <string>
@@ -93,7 +93,7 @@ private:
     int output_size_;
     
     // The LSTM model
-    LSTM model_;
+    nn::LSTM model_;
     
     // Random number generator
     std::mt19937 random_engine_;
