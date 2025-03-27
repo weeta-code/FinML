@@ -6,3 +6,10 @@ tasks.json
 /build
 a.out
 
+/analysis
+/visualizations
+/API/build
+/API/build_server.sh
+/API/finml_api_server
+/API/test_api.py
+/API/finml_api_server.cpp
