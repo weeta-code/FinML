@@ -16,19 +16,24 @@ file(GLOB_RECURSE LIB_SOURCES
     "src/nn/*.cpp"
     "src/optim/*.cpp"
     "src/data/*.cpp"
+    "src/options/*.cpp"
 )
 
 # Create the library
 add_library(finml ${LIB_SOURCES})
 
-# Create the demo executable
+# Create the demo executables
 add_executable(run_hybrid_trading_model demo/run_hybrid_trading_model.cpp)
 target_link_libraries(run_hybrid_trading_model finml)
+
+add_executable(lstm_options_arbitrage demo/lstm_options_arbitrage.cpp)
+target_link_libraries(lstm_options_arbitrage finml)
 
 # Add any dependencies (e.g., threading)
 find_package(Threads REQUIRED)
 target_link_libraries(finml Threads::Threads)
 target_link_libraries(run_hybrid_trading_model Threads::Threads)
+target_link_libraries(lstm_options_arbitrage Threads::Threads)
 
 # Copy data files to build directory
 file(COPY data/ DESTINATION ${CMAKE_BINARY_DIR}/data)
@@ -37,10 +42,14 @@ file(COPY data/ DESTINATION ${CMAKE_BINARY_DIR}/data)
 set_target_properties(run_hybrid_trading_model PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
+set_target_properties(lstm_options_arbitrage PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
 
 # Add compile options
 target_compile_options(finml PRIVATE -Wall -Wextra)
 target_compile_options(run_hybrid_trading_model PRIVATE -Wall -Wextra)
+target_compile_options(lstm_options_arbitrage PRIVATE -Wall -Wextra)
 
 # Print status
 message(STATUS "FinML project configured with C++${CMAKE_CXX_STANDARD}")

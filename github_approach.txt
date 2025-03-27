@@ -1,0 +1,68 @@
+# LSTM Options Arbitrage Detection - GitHub Approach
+
+This notebook demonstrates how to run the LSTM-based options arbitrage detection model in Google Colab using GitHub.
+
+## Option 2: Using GitHub (No File Upload Required)
+
+If you've pushed your code to GitHub, this is the most reliable method.
+
+## Step 1: Clone the Repository
+
+```python
+!git clone https://github.com/yourusername/finml-options.git
+%cd finml-options
+```
+
+## Step 2: Set Up Environment
+
+```python
+!apt-get update
+!apt-get install -y cmake build-essential
+```
+
+## Step 3: Build the Project
+
+```python
+!mkdir -p build
+%cd build
+!cmake ..
+!make -j lstm_options_arbitrage
+```
+
+## Step 4: Run the LSTM Options Arbitrage Model
+
+```python
+!./bin/lstm_options_arbitrage
+```
+
+## Step 5: Analyze and Visualize Results
+
+```python
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+
+# Set visualization style
+plt.style.use('ggplot')
+sns.set_palette("Set2")
+plt.rcParams['figure.figsize'] = [15, 8]
+plt.rcParams['font.size'] = 14
+
+# Load predicted prices and volatility
+predictions = pd.read_csv('predicted_prices.csv')
+print(f"Loaded {len(predictions)} days of price and volatility predictions")
+predictions.head()
+
+# Plot price predictions
+plt.figure(figsize=(15, 6))
+plt.plot(predictions['Day'], predictions['Price'], 'g-', linewidth=2)
+plt.fill_between(predictions['Day'], 
+                predictions['Price'] * (1 - predictions['Volatility']/2),
+                predictions['Price'] * (1 + predictions['Volatility']/2),
+                color='g', alpha=0.2)
+plt.title('LSTM Stock Price Predictions with Volatility Range')
+plt.xlabel('Days')
+plt.ylabel('Price ($)')
+plt.grid(True)
+plt.show() 
