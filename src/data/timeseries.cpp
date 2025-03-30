@@ -1,4 +1,5 @@
 #include "finml/data/timeseries.h"
+#include "finml/core/matrix.h"
 #include <iostream>
 #include <sstream>
 #include <iomanip>
@@ -8,6 +9,58 @@
 
 namespace finml {
 namespace data {
+
+// Helper function to parse date string
+std::chrono::system_clock::time_point parseDate(const std::string& date_str, const std::string& date_format) {
+    std::tm tm = {};
+    
+    // Default format is yyyy-MM-dd
+    if (date_format.empty() || date_format == "%Y-%m-%d") {
+        // Parse YYYY-MM-DD format manually
+        int year = 0, month = 0, day = 0;
+        
+        // Try to parse the date with more detailed error messages
+        std::string::size_type firstDash = date_str.find('-');
+        std::string::size_type secondDash = date_str.find('-', firstDash + 1);
+        
+        if (firstDash == std::string::npos || secondDash == std::string::npos) {
+            throw std::invalid_argument("Failed to parse date '" + date_str + "', expected format 'YYYY-MM-DD'");
+        }
+        
+        year = std::stoi(date_str.substr(0, firstDash));
+        month = std::stoi(date_str.substr(firstDash + 1, secondDash - firstDash - 1));
+        day = std::stoi(date_str.substr(secondDash + 1));
+        
+        // Validate the date components
+        if (year < 1900 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) {
+            throw std::invalid_argument("Invalid date components in '" + date_str + "'");
+        }
+        
+        tm.tm_year = year - 1900; // Adjust year (tm_year is years since 1900)
+        tm.tm_mon = month - 1;    // Adjust month (tm_mon is 0-11)
+        tm.tm_mday = day;         // Day of month (1-31)
+    } else {
+        // Use the specified format
+        std::istringstream date_ss(date_str);
+        date_ss >> std::get_time(&tm, date_format.c_str());
+        if (date_ss.fail()) {
+            throw std::invalid_argument("Failed to parse date: '" + date_str + "' with format '" + date_format + "'");
+        }
+    }
+    
+    // Default to noon to avoid timezone issues
+    tm.tm_hour = 12;
+    tm.tm_min = 0;
+    tm.tm_sec = 0;
+    
+    // Validate the parsed time
+    std::time_t time = std::mktime(&tm);
+    if (time == -1) {
+        throw std::invalid_argument("Invalid date/time from '" + date_str + "'");
+    }
+    
+    return std::chrono::system_clock::from_time_t(time);
+}
 
 TimeSeries::TimeSeries(const std::string& symbol) : symbol(symbol) {}
 
@@ -31,67 +84,10 @@ bool TimeSeries::loadFromCSV(const std::string& filename, bool has_header, const
         
         // Parse date
         std::getline(ss, token, ',');
-        std::tm tm = {};
-        
-        // Default format is yyyy-MM-dd
-        if (date_format.empty() || date_format == "%Y-%m-%d") {
-            // Parse YYYY-MM-DD format manually
-            int year = 0, month = 0, day = 0;
-            
-            // Try to parse the date with more detailed error messages
-            std::string::size_type firstDash = token.find('-');
-            std::string::size_type secondDash = token.find('-', firstDash + 1);
-            
-            if (firstDash == std::string::npos || secondDash == std::string::npos) {
-                std::cerr << "Error: Failed to parse date '" << token << "', expected format 'YYYY-MM-DD'" << std::endl;
-                continue;
-            }
-            
-            try {
-                year = std::stoi(token.substr(0, firstDash));
-                month = std::stoi(token.substr(firstDash + 1, secondDash - firstDash - 1));
-                day = std::stoi(token.substr(secondDash + 1));
-                
-                // Validate the date components
-                if (year < 1900 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) {
-                    std::cerr << "Error: Invalid date components in '" << token << "': year=" << year
-                              << ", month=" << month << ", day=" << day << std::endl;
-                    continue;
-                }
-                
-                tm.tm_year = year - 1900; // Adjust year (tm_year is years since 1900)
-                tm.tm_mon = month - 1;    // Adjust month (tm_mon is 0-11)
-                tm.tm_mday = day;         // Day of month (1-31)
-            } catch (const std::exception& e) {
-                std::cerr << "Error: Failed to convert date components in '" << token 
-                          << "': " << e.what() << std::endl;
-                continue;
-            }
-        } else {
-            // Use the specified format
-            std::istringstream date_ss(token);
-            date_ss >> std::get_time(&tm, date_format.c_str());
-            if (date_ss.fail()) {
-                std::cerr << "Error: Failed to parse date: '" << token << "' with format '" << date_format << "'" << std::endl;
-                continue;
-            }
-        }
-        
-        // Default to noon to avoid timezone issues
-        tm.tm_hour = 12;
-        tm.tm_min = 0;
-        tm.tm_sec = 0;
-        
-        // Validate the parsed time
-        std::time_t time = std::mktime(&tm);
-        if (time == -1) {
-            std::cerr << "Error: Invalid date/time from '" << token << "'" << std::endl;
-            continue;
-        }
-        
-        auto time_point = std::chrono::system_clock::from_time_t(time);
         
         try {
+            auto time_point = parseDate(token, date_format);
+            
             // Parse OHLCV
             TimeSeriesPoint point;
             point.timestamp = time_point;
@@ -492,24 +488,27 @@ std::pair<double, double> TimeSeries::normalizeMinMax(const std::string& feature
 }
 
 std::pair<TimeSeries, TimeSeries> TimeSeries::trainTestSplit(double train_ratio) const {
-    if (data.empty()) {
-        return {TimeSeries(symbol), TimeSeries(symbol)};
-    }
-    
-    size_t train_size = static_cast<size_t>(data.size() * train_ratio);
-    if (train_size == 0) {
-        train_size = 1;
+    if (train_ratio <= 0.0 || train_ratio >= 1.0) {
+        throw std::invalid_argument("Train ratio must be between 0 and 1");
     }
     
     TimeSeries train_set(symbol);
     TimeSeries test_set(symbol);
     
-    for (size_t i = 0; i < data.size(); ++i) {
-        if (i < train_size) {
-            train_set.addDataPoint(data[i]);
-        } else {
-            test_set.addDataPoint(data[i]);
-        }
+    // Create indices and shuffle using matrix random generator
+    std::vector<size_t> indices(data.size());
+    std::iota(indices.begin(), indices.end(), 0);
+    std::shuffle(indices.begin(), indices.end(), core::getRandomEngine());
+    
+    size_t train_size = static_cast<size_t>(data.size() * train_ratio);
+    
+    // Split data into train and test sets
+    for (size_t i = 0; i < train_size; ++i) {
+        train_set.data.push_back(data[indices[i]]);
+    }
+    
+    for (size_t i = train_size; i < data.size(); ++i) {
+        test_set.data.push_back(data[indices[i]]);
     }
     
     return {train_set, test_set};

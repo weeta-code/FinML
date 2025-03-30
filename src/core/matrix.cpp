@@ -5,9 +5,17 @@
 #include <algorithm>
 #include <numeric>
 #include <functional>
+#include <chrono>
 
 namespace finml {
 namespace core {
+
+// Static random number generator
+static std::mt19937& getRandomEngine() {
+    static std::mt19937 engine(static_cast<unsigned>(
+        std::chrono::system_clock::now().time_since_epoch().count()));
+    return engine;
+}
 
 Matrix::Matrix(size_t rows, size_t cols) : rows(rows), cols(cols) {
     data.resize(rows);
@@ -46,14 +54,12 @@ Matrix::Matrix(const std::initializer_list<std::initializer_list<float>>& init_l
 }
 
 Matrix Matrix::random(size_t rows, size_t cols, float mean, float stddev) {
-    std::random_device rd;
-    std::mt19937 gen(rd());
     std::normal_distribution<float> dist(mean, stddev);
-    
     Matrix result(rows, cols);
+    
     for (size_t i = 0; i < rows; ++i) {
         for (size_t j = 0; j < cols; ++j) {
-            result.at(i, j) = Value::create(dist(gen));
+            result.at(i, j) = Value::create(dist(getRandomEngine()));
         }
     }
     

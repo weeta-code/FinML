@@ -1,16 +1,32 @@
 #include "finml/models/lstm_stock_predictor.h"
 #include "finml/optim/loss.h"
+#include "finml/core/matrix.h"
 #include <iostream>
 #include <fstream>
 #include <stdexcept>
 #include <algorithm>
-#include <random>
 #include <chrono>
 #include <cmath>
 #include <limits>
 
 namespace finml {
 namespace models {
+
+// Helper function to check matrix dimensions
+static bool checkMatrixDimensions(const core::Matrix& matrix, size_t expected_rows, const char* matrix_name) {
+    if (matrix.numRows() != expected_rows) {
+        std::cerr << "Error: " << matrix_name << " dimensions (" << matrix.numRows() 
+                  << ") don't match expected size (" << expected_rows << ")" << std::endl;
+        return false;
+    }
+    return true;
+}
+
+// Helper function to create dropout mask
+static std::function<bool()> createDropoutMask(double dropout_rate) {
+    std::bernoulli_distribution dropout_dist(1.0 - dropout_rate);
+    return [&]() -> bool { return dropout_dist(core::getRandomEngine()); };
+}
 
 LSTMStockPredictor::LSTMStockPredictor(
     int input_size, 
@@ -22,8 +38,7 @@ LSTMStockPredictor::LSTMStockPredictor(
     hidden_size_(hidden_size),
     sequence_length_(sequence_length),
     output_size_(output_size),
-    model_(input_size, hidden_size, true, "StockPredictorLSTM"), // Using nn::LSTM constructor
-    random_engine_(seed) {
+    model_(input_size, hidden_size, true, "StockPredictorLSTM") {
     
     // Initialize the LSTM model
     std::cout << "Initialized LSTM Stock Predictor with:"
@@ -77,12 +92,12 @@ void LSTMStockPredictor::train(
     
     // Training loop
     for (int epoch = 0; epoch < epochs; ++epoch) {
-        // Shuffle training data
+        // Create indices for shuffling
         std::vector<size_t> indices(training_samples);
-        for (size_t i = 0; i < training_samples; ++i) {
-            indices[i] = i;
-        }
-        std::shuffle(indices.begin(), indices.end(), random_engine_);
+        std::iota(indices.begin(), indices.end(), 0);
+        
+        // Use the matrix random number generator for shuffling
+        std::shuffle(indices.begin(), indices.end(), core::getRandomEngine());
         
         double total_loss = 0.0;
         int batch_count = 0;
@@ -136,36 +151,18 @@ void LSTMStockPredictor::train(
                 std::cout << "Output matrix dimensions: " 
                           << output.numRows() << "x" << output.numCols() << std::endl;
                 
-                for (size_t r = 0; r < output.numRows() && r < target_matrix.numRows(); ++r) {
-                    for (size_t c = 0; c < output.numCols() && c < target_matrix.numCols(); ++c) {
-                        if (output.at(r, c) != nullptr && target_matrix.at(r, c) != nullptr) {
-                            double diff = output.at(r, c)->data - target_matrix.at(r, c)->data;
-                            mse += diff * diff;
-                        } else {
-                            std::cerr << "Error: Null pointer in output or target matrix at (" 
-                                      << r << "," << c << ")" << std::endl;
-                        }
-                    }
-                }
+                // Use the centralized MSE loss function
+                mse = optim::mse_loss(output, target_matrix);
                 
-                size_t total_elements = std::min(output.numRows(), target_matrix.numRows()) * 
-                                       std::min(output.numCols(), target_matrix.numCols());
-                
-                if (total_elements > 0) {
-                    mse /= total_elements;
-                    batch_loss += mse;
-                } else {
-                    std::cerr << "Error: Zero elements in output or target matrix" << std::endl;
-                }
+                batch_loss += mse;
             }
             
             batch_loss /= batch_size_actual;
             total_loss += batch_loss;
             batch_count++;
             
-            // Create a dropout mask function based on dropout_rate - just for logging
-            std::bernoulli_distribution dropout_dist(1.0 - dropout_rate);
-            auto dropout_mask = [&]() -> bool { return dropout_dist(random_engine_); };
+            // Create dropout mask using the same random generator
+            auto dropout_mask = createDropoutMask(dropout_rate);
             
             // Print about dropping out 
             std::cout << "Batch " << batch_count << " complete. Applied dropout with rate: " 
@@ -177,7 +174,7 @@ void LSTMStockPredictor::train(
         // Validation
         double val_loss = 0.0;
         if (validation_samples > 0) {
-            model_.reset_state(); // Use reset_state() instead of resetState()
+            model_.reset_state();
             
             for (size_t i = 0; i < validation_samples; ++i) {
                 auto seq_matrices = sequenceToMatrices(val_sequences[i]);
@@ -189,16 +186,8 @@ void LSTMStockPredictor::train(
                     output = model_.forward(seq_matrix);
                 }
                 
-                // Calculate MSE loss
-                double mse = 0.0;
-                for (size_t r = 0; r < output.numRows(); ++r) {
-                    for (size_t c = 0; c < output.numCols(); ++c) {
-                        double diff = output.at(r, c)->data - target_matrix.at(r, c)->data;
-                        mse += diff * diff;
-                    }
-                }
-                mse /= (output.numRows() * output.numCols());
-                val_loss += mse;
+                // Use the centralized MSE loss function
+                val_loss += optim::mse_loss(output, target_matrix);
             }
             
             val_loss /= validation_samples;
@@ -274,11 +263,8 @@ std::vector<double> LSTMStockPredictor::predictNextDays(
         core::Matrix output;
         
         for (const auto& seq_matrix : input_matrices) {
-            if (seq_matrix.numRows() == input_size_) {
+            if (checkMatrixDimensions(seq_matrix, input_size_, "Input matrix")) {
                 output = model_.forward(seq_matrix);
-            } else {
-                std::cerr << "Error: Matrix dimensions (" << seq_matrix.numRows() 
-                          << ") don't match LSTM input size (" << input_size_ << ")" << std::endl;
             }
         }
         
@@ -319,29 +305,17 @@ bool LSTMStockPredictor::loadModel(const std::string& filename) {
 std::vector<core::Matrix> LSTMStockPredictor::sequenceToMatrices(const std::vector<double>& sequence) {
     std::vector<core::Matrix> matrices;
     
-    // Debug output
-    std::cout << "Converting sequence of size " << sequence.size() 
-              << " to matrices with input_size = " << input_size_ << std::endl;
-    
     for (size_t i = 0; i < sequence.size(); ++i) {
-        core::Matrix m(input_size_, 1);
-        
-        // In the original implementation, we're only using one value for all input dimensions
-        // This is likely causing the issue as we probably want to use multiple features
-        std::cout << "  Sequence item " << i << " has value: " << sequence[i] << std::endl;
-        
-        // Ensure we don't access out of bounds
         if (i % input_size_ == 0 && i / input_size_ < sequence.size() / input_size_) {
-            // Create matrix with proper values for each row
+            core::Matrix m(input_size_, 1);
             for (int j = 0; j < input_size_ && i + j < sequence.size(); ++j) {
                 m.at(j, 0) = core::Value::create(sequence[i + j]);
             }
             matrices.push_back(m);
-            i += input_size_ - 1; // Skip ahead since we used multiple values
+            i += input_size_ - 1;
         }
     }
     
-    std::cout << "Created " << matrices.size() << " matrices from sequence" << std::endl;
     return matrices;
 }
 

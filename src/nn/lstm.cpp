@@ -49,14 +49,6 @@ LSTM::LSTM(size_t input_size, size_t hidden_size, bool use_bias, const std::stri
     c = core::Matrix(hidden_size, 1);
 }
 
-core::Matrix LSTM::sigmoid(const core::Matrix& x) const {
-    return core::Matrix::sigmoid(x);
-}
-
-core::Matrix LSTM::tanh(const core::Matrix& x) const {
-    return core::Matrix::tanh(x);
-}
-
 core::Matrix LSTM::forward(const core::Matrix& input) {
     if (input.numCols() != 1) {
         throw std::invalid_argument("LSTM input must be a column vector");
@@ -86,7 +78,7 @@ std::tuple<core::Matrix, core::Matrix, core::Matrix> LSTM::forward_with_state(
     if (use_bias) {
         i_t = core::Matrix::elementWiseAdd(i_t, b_i);
     }
-    i_t = sigmoid(i_t);
+    i_t = core::Matrix::sigmoid(i_t);
     
     // Forget gate
     core::Matrix f_t = core::Matrix::matmul(W_f, input);
@@ -94,7 +86,7 @@ std::tuple<core::Matrix, core::Matrix, core::Matrix> LSTM::forward_with_state(
     if (use_bias) {
         f_t = core::Matrix::elementWiseAdd(f_t, b_f);
     }
-    f_t = sigmoid(f_t);
+    f_t = core::Matrix::sigmoid(f_t);
     
     // Output gate
     core::Matrix o_t = core::Matrix::matmul(W_o, input);
@@ -102,7 +94,7 @@ std::tuple<core::Matrix, core::Matrix, core::Matrix> LSTM::forward_with_state(
     if (use_bias) {
         o_t = core::Matrix::elementWiseAdd(o_t, b_o);
     }
-    o_t = sigmoid(o_t);
+    o_t = core::Matrix::sigmoid(o_t);
     
     // Cell gate
     core::Matrix g_t = core::Matrix::matmul(W_g, input);
@@ -110,14 +102,14 @@ std::tuple<core::Matrix, core::Matrix, core::Matrix> LSTM::forward_with_state(
     if (use_bias) {
         g_t = core::Matrix::elementWiseAdd(g_t, b_g);
     }
-    g_t = tanh(g_t);
+    g_t = core::Matrix::tanh(g_t);
     
     // Cell state update
     core::Matrix c_t = core::Matrix::elementWiseMultiply(f_t, c_prev);
     c_t = core::Matrix::elementWiseAdd(c_t, core::Matrix::elementWiseMultiply(i_t, g_t));
     
     // Hidden state update
-    core::Matrix h_t = core::Matrix::elementWiseMultiply(o_t, tanh(c_t));
+    core::Matrix h_t = core::Matrix::elementWiseMultiply(o_t, core::Matrix::tanh(c_t));
     
     return {h_t, h_t, c_t};
 }

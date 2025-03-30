@@ -7,6 +7,43 @@
 namespace finml {
 namespace options {
 
+// Helper function to calculate option payoff
+double calculateOptionPayoff(double S_T, double K, OptionType type) {
+    if (type == OptionType::CALL) {
+        return std::max(S_T - K, 0.0);
+    } else {
+        return std::max(K - S_T, 0.0);
+    }
+}
+
+// Helper functions for option strategy creation
+namespace {
+    // Helper to calculate option premium
+    double calculateOptionPremium(
+        double S,
+        double K,
+        double T,
+        double r,
+        double sigma,
+        OptionType type,
+        std::shared_ptr<PricingModel> model
+    ) {
+        return model->price(S, K, r, sigma, T, type);
+    }
+    
+    // Helper to add option contract to strategy
+    void addOptionContract(
+        OptionsStrategy& strategy,
+        double K,
+        double T,
+        OptionType type,
+        int quantity,
+        double premium
+    ) {
+        strategy.addContract(OptionContract(K, T, type, OptionStyle::EUROPEAN, quantity, premium));
+    }
+}
+
 // OptionContract implementation
 OptionContract::OptionContract(
     double K,
@@ -36,15 +73,7 @@ double OptionsStrategy::payoff(double S_T) const {
     
     // Calculate payoff from option contracts
     for (const auto& contract : contracts) {
-        double option_payoff = 0.0;
-        
-        if (contract.type == OptionType::CALL) {
-            option_payoff = std::max(S_T - contract.K, 0.0);
-        } else {
-            option_payoff = std::max(contract.K - S_T, 0.0);
-        }
-        
-        total_payoff += contract.quantity * option_payoff;
+        total_payoff += contract.quantity * calculateOptionPayoff(S_T, contract.K, contract.type);
     }
     
     // Add payoff from underlying position
@@ -294,12 +323,11 @@ OptionsStrategy createLongCall(
 ) {
     OptionsStrategy strategy("Long Call", model);
     
-    // Calculate premium
-    double premium = model->price(S, K, r, sigma, T, OptionType::CALL);
+    // Calculate option premium
+    double premium = calculateOptionPremium(S, K, T, r, sigma, OptionType::CALL, model);
     
-    // Add long call
-    OptionContract call(K, T, OptionType::CALL, OptionStyle::EUROPEAN, 1, premium);
-    strategy.addContract(call);
+    // Add call option
+    addOptionContract(strategy, K, T, OptionType::CALL, 1, premium);
     
     return strategy;
 }
@@ -314,12 +342,11 @@ OptionsStrategy createLongPut(
 ) {
     OptionsStrategy strategy("Long Put", model);
     
-    // Calculate premium
-    double premium = model->price(S, K, r, sigma, T, OptionType::PUT);
+    // Calculate option premium
+    double premium = calculateOptionPremium(S, K, T, r, sigma, OptionType::PUT, model);
     
-    // Add long put
-    OptionContract put(K, T, OptionType::PUT, OptionStyle::EUROPEAN, 1, premium);
-    strategy.addContract(put);
+    // Add put option
+    addOptionContract(strategy, K, T, OptionType::PUT, 1, premium);
     
     return strategy;
 }
@@ -333,23 +360,17 @@ OptionsStrategy createBullCallSpread(
     double sigma,
     std::shared_ptr<PricingModel> model
 ) {
-    if (K1 >= K2) {
-        throw std::invalid_argument("K1 must be less than K2 for a bull call spread");
-    }
-    
     OptionsStrategy strategy("Bull Call Spread", model);
     
-    // Calculate premiums
-    double premium1 = model->price(S, K1, r, sigma, T, OptionType::CALL);
-    double premium2 = model->price(S, K2, r, sigma, T, OptionType::CALL);
+    // Calculate option premiums
+    double premium1 = calculateOptionPremium(S, K1, T, r, sigma, OptionType::CALL, model);
+    double premium2 = calculateOptionPremium(S, K2, T, r, sigma, OptionType::CALL, model);
     
     // Add long call at lower strike
-    OptionContract call1(K1, T, OptionType::CALL, OptionStyle::EUROPEAN, 1, premium1);
-    strategy.addContract(call1);
+    addOptionContract(strategy, K1, T, OptionType::CALL, 1, premium1);
     
     // Add short call at higher strike
-    OptionContract call2(K2, T, OptionType::CALL, OptionStyle::EUROPEAN, -1, premium2);
-    strategy.addContract(call2);
+    addOptionContract(strategy, K2, T, OptionType::CALL, -1, premium2);
     
     return strategy;
 }
@@ -363,23 +384,17 @@ OptionsStrategy createBearPutSpread(
     double sigma,
     std::shared_ptr<PricingModel> model
 ) {
-    if (K1 >= K2) {
-        throw std::invalid_argument("K1 must be less than K2 for a bear put spread");
-    }
-    
     OptionsStrategy strategy("Bear Put Spread", model);
     
-    // Calculate premiums
-    double premium1 = model->price(S, K1, r, sigma, T, OptionType::PUT);
-    double premium2 = model->price(S, K2, r, sigma, T, OptionType::PUT);
-    
-    // Add short put at lower strike
-    OptionContract put1(K1, T, OptionType::PUT, OptionStyle::EUROPEAN, -1, premium1);
-    strategy.addContract(put1);
+    // Calculate option premiums
+    double premium1 = calculateOptionPremium(S, K1, T, r, sigma, OptionType::PUT, model);
+    double premium2 = calculateOptionPremium(S, K2, T, r, sigma, OptionType::PUT, model);
     
     // Add long put at higher strike
-    OptionContract put2(K2, T, OptionType::PUT, OptionStyle::EUROPEAN, 1, premium2);
-    strategy.addContract(put2);
+    addOptionContract(strategy, K1, T, OptionType::PUT, 1, premium1);
+    
+    // Add short put at lower strike
+    addOptionContract(strategy, K2, T, OptionType::PUT, -1, premium2);
     
     return strategy;
 }
@@ -394,17 +409,13 @@ OptionsStrategy createStraddle(
 ) {
     OptionsStrategy strategy("Straddle", model);
     
-    // Calculate premiums
-    double call_premium = model->price(S, K, r, sigma, T, OptionType::CALL);
-    double put_premium = model->price(S, K, r, sigma, T, OptionType::PUT);
+    // Calculate option premiums
+    double call_premium = calculateOptionPremium(S, K, T, r, sigma, OptionType::CALL, model);
+    double put_premium = calculateOptionPremium(S, K, T, r, sigma, OptionType::PUT, model);
     
-    // Add long call
-    OptionContract call(K, T, OptionType::CALL, OptionStyle::EUROPEAN, 1, call_premium);
-    strategy.addContract(call);
-    
-    // Add long put
-    OptionContract put(K, T, OptionType::PUT, OptionStyle::EUROPEAN, 1, put_premium);
-    strategy.addContract(put);
+    // Add call and put options
+    addOptionContract(strategy, K, T, OptionType::CALL, 1, call_premium);
+    addOptionContract(strategy, K, T, OptionType::PUT, 1, put_premium);
     
     return strategy;
 }
@@ -418,23 +429,15 @@ OptionsStrategy createStrangle(
     double sigma,
     std::shared_ptr<PricingModel> model
 ) {
-    if (K1 >= K2) {
-        throw std::invalid_argument("K1 must be less than K2 for a strangle");
-    }
-    
     OptionsStrategy strategy("Strangle", model);
     
-    // Calculate premiums
-    double put_premium = model->price(S, K1, r, sigma, T, OptionType::PUT);
-    double call_premium = model->price(S, K2, r, sigma, T, OptionType::CALL);
+    // Calculate option premiums
+    double call_premium = calculateOptionPremium(S, K2, T, r, sigma, OptionType::CALL, model);
+    double put_premium = calculateOptionPremium(S, K1, T, r, sigma, OptionType::PUT, model);
     
-    // Add long put at lower strike
-    OptionContract put(K1, T, OptionType::PUT, OptionStyle::EUROPEAN, 1, put_premium);
-    strategy.addContract(put);
-    
-    // Add long call at higher strike
-    OptionContract call(K2, T, OptionType::CALL, OptionStyle::EUROPEAN, 1, call_premium);
-    strategy.addContract(call);
+    // Add call and put options
+    addOptionContract(strategy, K2, T, OptionType::CALL, 1, call_premium);
+    addOptionContract(strategy, K1, T, OptionType::PUT, 1, put_premium);
     
     return strategy;
 }
@@ -449,33 +452,17 @@ OptionsStrategy createButterflySpread(
     double sigma,
     std::shared_ptr<PricingModel> model
 ) {
-    if (K1 >= K2 || K2 >= K3) {
-        throw std::invalid_argument("K1 < K2 < K3 must be satisfied for a butterfly spread");
-    }
-    
-    // Check if K2 is equidistant from K1 and K3
-    if (std::abs((K3 - K2) - (K2 - K1)) > 0.01) {
-        throw std::invalid_argument("K2 should be approximately equidistant from K1 and K3 for a balanced butterfly spread");
-    }
-    
     OptionsStrategy strategy("Butterfly Spread", model);
     
-    // Calculate premiums
-    double premium1 = model->price(S, K1, r, sigma, T, OptionType::CALL);
-    double premium2 = model->price(S, K2, r, sigma, T, OptionType::CALL);
-    double premium3 = model->price(S, K3, r, sigma, T, OptionType::CALL);
+    // Calculate option premiums
+    double premium1 = calculateOptionPremium(S, K1, T, r, sigma, OptionType::CALL, model);
+    double premium2 = calculateOptionPremium(S, K2, T, r, sigma, OptionType::CALL, model);
+    double premium3 = calculateOptionPremium(S, K3, T, r, sigma, OptionType::CALL, model);
     
-    // Add long call at lowest strike
-    OptionContract call1(K1, T, OptionType::CALL, OptionStyle::EUROPEAN, 1, premium1);
-    strategy.addContract(call1);
-    
-    // Add short calls at middle strike
-    OptionContract call2(K2, T, OptionType::CALL, OptionStyle::EUROPEAN, -2, premium2);
-    strategy.addContract(call2);
-    
-    // Add long call at highest strike
-    OptionContract call3(K3, T, OptionType::CALL, OptionStyle::EUROPEAN, 1, premium3);
-    strategy.addContract(call3);
+    // Add options to create butterfly spread
+    addOptionContract(strategy, K1, T, OptionType::CALL, 1, premium1);
+    addOptionContract(strategy, K2, T, OptionType::CALL, -2, premium2);
+    addOptionContract(strategy, K3, T, OptionType::CALL, 1, premium3);
     
     return strategy;
 }
@@ -491,33 +478,19 @@ OptionsStrategy createIronCondor(
     double sigma,
     std::shared_ptr<PricingModel> model
 ) {
-    if (K1 >= K2 || K2 >= K3 || K3 >= K4) {
-        throw std::invalid_argument("K1 < K2 < K3 < K4 must be satisfied for an iron condor");
-    }
-    
     OptionsStrategy strategy("Iron Condor", model);
     
-    // Calculate premiums
-    double put_premium1 = model->price(S, K1, r, sigma, T, OptionType::PUT);
-    double put_premium2 = model->price(S, K2, r, sigma, T, OptionType::PUT);
-    double call_premium3 = model->price(S, K3, r, sigma, T, OptionType::CALL);
-    double call_premium4 = model->price(S, K4, r, sigma, T, OptionType::CALL);
+    // Calculate option premiums
+    double put_premium1 = calculateOptionPremium(S, K1, T, r, sigma, OptionType::PUT, model);
+    double put_premium2 = calculateOptionPremium(S, K2, T, r, sigma, OptionType::PUT, model);
+    double call_premium1 = calculateOptionPremium(S, K3, T, r, sigma, OptionType::CALL, model);
+    double call_premium2 = calculateOptionPremium(S, K4, T, r, sigma, OptionType::CALL, model);
     
-    // Add long put at lowest strike
-    OptionContract put1(K1, T, OptionType::PUT, OptionStyle::EUROPEAN, 1, put_premium1);
-    strategy.addContract(put1);
-    
-    // Add short put at lower middle strike
-    OptionContract put2(K2, T, OptionType::PUT, OptionStyle::EUROPEAN, -1, put_premium2);
-    strategy.addContract(put2);
-    
-    // Add short call at upper middle strike
-    OptionContract call3(K3, T, OptionType::CALL, OptionStyle::EUROPEAN, -1, call_premium3);
-    strategy.addContract(call3);
-    
-    // Add long call at highest strike
-    OptionContract call4(K4, T, OptionType::CALL, OptionStyle::EUROPEAN, 1, call_premium4);
-    strategy.addContract(call4);
+    // Add options to create iron condor
+    addOptionContract(strategy, K1, T, OptionType::PUT, 1, put_premium1);
+    addOptionContract(strategy, K2, T, OptionType::PUT, -1, put_premium2);
+    addOptionContract(strategy, K3, T, OptionType::CALL, -1, call_premium1);
+    addOptionContract(strategy, K4, T, OptionType::CALL, 1, call_premium2);
     
     return strategy;
 }
@@ -532,15 +505,12 @@ OptionsStrategy createCoveredCall(
 ) {
     OptionsStrategy strategy("Covered Call", model);
     
-    // Calculate premium
-    double premium = model->price(S, K, r, sigma, T, OptionType::CALL);
+    // Calculate option premium
+    double premium = calculateOptionPremium(S, K, T, r, sigma, OptionType::CALL, model);
     
-    // Add short call
-    OptionContract call(K, T, OptionType::CALL, OptionStyle::EUROPEAN, -1, premium);
-    strategy.addContract(call);
-    
-    // Add long position in the underlying
+    // Add underlying position and short call
     strategy.addUnderlyingPosition(1.0);
+    addOptionContract(strategy, K, T, OptionType::CALL, -1, premium);
     
     return strategy;
 }
@@ -555,15 +525,12 @@ OptionsStrategy createProtectivePut(
 ) {
     OptionsStrategy strategy("Protective Put", model);
     
-    // Calculate premium
-    double premium = model->price(S, K, r, sigma, T, OptionType::PUT);
+    // Calculate option premium
+    double premium = calculateOptionPremium(S, K, T, r, sigma, OptionType::PUT, model);
     
-    // Add long put
-    OptionContract put(K, T, OptionType::PUT, OptionStyle::EUROPEAN, 1, premium);
-    strategy.addContract(put);
-    
-    // Add long position in the underlying
+    // Add underlying position and long put
     strategy.addUnderlyingPosition(1.0);
+    addOptionContract(strategy, K, T, OptionType::PUT, 1, premium);
     
     return strategy;
 }

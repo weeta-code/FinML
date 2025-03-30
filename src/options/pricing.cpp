@@ -1,4 +1,5 @@
 #include "finml/options/pricing.h"
+#include "finml/core/matrix.h"
 #include <cmath>
 #include <vector>
 #include <algorithm>
@@ -8,15 +9,45 @@
 namespace finml {
 namespace options {
 
+// Utility class for normal distribution functions
+class NormalDistribution {
+public:
+    static double cdf(double x) {
+        return 0.5 * (1 + std::erf(x / std::sqrt(2.0)));
+    }
+    
+    static double pdf(double x) {
+        return (1.0 / std::sqrt(2.0 * M_PI)) * std::exp(-0.5 * x * x);
+    }
+};
+
+// Helper functions for Greeks calculations
+namespace {
+    // Helper for expiration payoff
+    double getExpirationPayoff(double S, double K, OptionType type) {
+        if (type == OptionType::CALL) {
+            return std::max(S - K, 0.0);
+        } else {
+            return std::max(K - S, 0.0);
+        }
+    }
+    
+    // Helper for expiration delta
+    double getExpirationDelta(double S, double K, OptionType type) {
+        if (type == OptionType::CALL) {
+            return S > K ? 1.0 : 0.0;
+        } else {
+            return S < K ? -1.0 : 0.0;
+        }
+    }
+    
+    // Helper for zero Greeks at expiration
+    double getZeroGreeks() {
+        return 0.0;
+    }
+}
+
 // Black-Scholes Model Implementation
-double BlackScholes::normalCDF(double x) const {
-    return 0.5 * (1 + std::erf(x / std::sqrt(2.0)));
-}
-
-double BlackScholes::normalPDF(double x) const {
-    return (1.0 / std::sqrt(2.0 * M_PI)) * std::exp(-0.5 * x * x);
-}
-
 double BlackScholes::d1(double S, double K, double r, double sigma, double T) const {
     if (T <= 0.0 || sigma <= 0.0) {
         throw std::invalid_argument("Time to maturity and volatility must be positive");
@@ -30,87 +61,77 @@ double BlackScholes::d2(double S, double K, double r, double sigma, double T) co
 
 double BlackScholes::price(double S, double K, double r, double sigma, double T, OptionType type) const {
     if (T <= 0.0) {
-        // At expiration
-        if (type == OptionType::CALL) {
-            return std::max(S - K, 0.0);
-        } else {
-            return std::max(K - S, 0.0);
-        }
+        return getExpirationPayoff(S, K, type);
     }
     
     double d1_val = d1(S, K, r, sigma, T);
     double d2_val = d2(S, K, r, sigma, T);
     
     if (type == OptionType::CALL) {
-        return S * normalCDF(d1_val) - K * std::exp(-r * T) * normalCDF(d2_val);
+        return S * NormalDistribution::cdf(d1_val) - K * std::exp(-r * T) * NormalDistribution::cdf(d2_val);
     } else {
-        return K * std::exp(-r * T) * normalCDF(-d2_val) - S * normalCDF(-d1_val);
+        return K * std::exp(-r * T) * NormalDistribution::cdf(-d2_val) - S * NormalDistribution::cdf(-d1_val);
     }
 }
 
 double BlackScholes::delta(double S, double K, double r, double sigma, double T, OptionType type) const {
     if (T <= 0.0) {
-        // At expiration
-        if (type == OptionType::CALL) {
-            return S > K ? 1.0 : 0.0;
-        } else {
-            return S < K ? -1.0 : 0.0;
-        }
+        return getExpirationDelta(S, K, type);
     }
     
     double d1_val = d1(S, K, r, sigma, T);
     
     if (type == OptionType::CALL) {
-        return normalCDF(d1_val);
+        return NormalDistribution::cdf(d1_val);
     } else {
-        return normalCDF(d1_val) - 1.0;
+        return NormalDistribution::cdf(d1_val) - 1.0;
     }
 }
 
 double BlackScholes::gamma(double S, double K, double r, double sigma, double T, OptionType type) const {
     if (T <= 0.0 || sigma <= 0.0) {
-        return 0.0; // Gamma is zero at expiration or with zero volatility
+        return getZeroGreeks();
     }
     
     double d1_val = d1(S, K, r, sigma, T);
-    return normalPDF(d1_val) / (S * sigma * std::sqrt(T));
+    return NormalDistribution::pdf(d1_val) / (S * sigma * std::sqrt(T));
 }
 
 double BlackScholes::theta(double S, double K, double r, double sigma, double T, OptionType type) const {
     if (T <= 0.0 || sigma <= 0.0) {
-        return 0.0;
+        return getZeroGreeks();
     }
     
     double d1_val = d1(S, K, r, sigma, T);
     double d2_val = d2(S, K, r, sigma, T);
     
     if (type == OptionType::CALL) {
-        return -S * normalPDF(d1_val) * sigma / (2 * std::sqrt(T)) - r * K * std::exp(-r * T) * normalCDF(d2_val);
+        return -S * NormalDistribution::pdf(d1_val) * sigma / (2 * std::sqrt(T)) - r * K * std::exp(-r * T) * NormalDistribution::cdf(d2_val);
     } else {
-        return -S * normalPDF(d1_val) * sigma / (2 * std::sqrt(T)) + r * K * std::exp(-r * T) * normalCDF(-d2_val);
+        return -S * NormalDistribution::pdf(d1_val) * sigma / (2 * std::sqrt(T)) + r * K * std::exp(-r * T) * NormalDistribution::cdf(-d2_val);
     }
 }
 
 double BlackScholes::vega(double S, double K, double r, double sigma, double T, OptionType type) const {
     if (T <= 0.0) {
-        return 0.0;
+        return getZeroGreeks();
     }
     
     double d1_val = d1(S, K, r, sigma, T);
-    return S * std::sqrt(T) * normalPDF(d1_val) / 100.0; // Divided by 100 to get the change per 1% change in volatility
+    return S * std::sqrt(T) * NormalDistribution::pdf(d1_val) / 100.0; // Divided by 100 to get the change per 1% change in volatility
 }
 
 double BlackScholes::rho(double S, double K, double r, double sigma, double T, OptionType type) const {
     if (T <= 0.0) {
-        return 0.0;
+        return getZeroGreeks();
     }
     
     double d2_val = d2(S, K, r, sigma, T);
     
     if (type == OptionType::CALL) {
-        return K * T * std::exp(-r * T) * normalCDF(d2_val) / 100.0; // Divided by 100 to get the change per 1% change in interest rate
+        return K * T * std::exp(-r * T) * NormalDistribution::cdf(d2_val) / 100.0; // Divided by 100 to get the change per 1% change in interest rate
     } else {
-        return -K * T * std::exp(-r * T) * normalCDF(-d2_val) / 100.0;
+        return -K * T * std::exp(-r * T) * NormalDistribution::cdf(-d2_val) / 100.0;
     }
 }
 
@@ -249,19 +270,10 @@ double BinomialTree::rho(double S, double K, double r, double sigma, double T, O
 }
 
 // Monte Carlo Model Implementation
-MonteCarlo::MonteCarlo(size_t num_simulations, size_t num_steps)
-    : num_simulations(num_simulations), num_steps(num_steps) {}
+MonteCarlo::MonteCarlo(size_t num_paths, size_t num_steps) 
+    : num_paths(num_paths), num_steps(num_steps) {}
 
-double MonteCarlo::price(
-    double S, 
-    double K, 
-    double r, 
-    double sigma, 
-    double T, 
-    OptionType type, 
-    OptionStyle style,
-    std::function<double(double, double, OptionType)> payoff_func
-) const {
+double MonteCarlo::price(double S, double K, double r, double sigma, double T, OptionType type) const {
     if (T <= 0.0) {
         // At expiration
         if (type == OptionType::CALL) {
@@ -271,89 +283,34 @@ double MonteCarlo::price(
         }
     }
     
-    // Default payoff function for European options
-    if (!payoff_func) {
-        payoff_func = [](double S_T, double K, OptionType type) {
-            if (type == OptionType::CALL) {
-                return std::max(S_T - K, 0.0);
-            } else {
-                return std::max(K - S_T, 0.0);
-            }
-        };
-    }
-    
-    // Random number generator
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::normal_distribution<double> normal(0.0, 1.0);
-    
     double dt = T / num_steps;
-    double drift = (r - 0.5 * sigma * sigma) * dt;
-    double vol = sigma * std::sqrt(dt);
-    
     double sum_payoffs = 0.0;
     
-    for (size_t i = 0; i < num_simulations; ++i) {
-        double S_t = S;
+    // Use matrix random number generator
+    auto& engine = core::getRandomEngine();
+    std::normal_distribution<double> normal(0.0, 1.0);
+    
+    for (size_t path = 0; path < num_paths; ++path) {
+        double St = S;
         
-        // For Asian options, we need to track the average price
-        double sum_prices = 0.0;
-        
-        // For barrier options, we need to track if the barrier was hit
-        bool barrier_hit = false;
-        
-        // Simulate the price path
-        for (size_t j = 0; j < num_steps; ++j) {
-            double z = normal(gen);
-            S_t = S_t * std::exp(drift + vol * z);
-            
-            // For Asian options, accumulate prices
-            if (style == OptionStyle::ASIAN) {
-                sum_prices += S_t;
-            }
-            
-            // For American options, check for early exercise
-            if (style == OptionStyle::AMERICAN) {
-                double exercise_value = payoff_func(S_t, K, type);
-                double continuation_value = 0.0; // This would require nested Monte Carlo, simplified here
-                
-                // If early exercise is optimal, add the payoff and break
-                if (exercise_value > continuation_value) {
-                    sum_payoffs += exercise_value * std::exp(-r * j * dt);
-                    break;
-                }
-            }
-            
-            // For barrier options, check if barrier is hit (simplified)
-            if (style == OptionStyle::BARRIER) {
-                // Example: Down-and-out barrier at 0.8*S
-                if (S_t < 0.8 * S) {
-                    barrier_hit = true;
-                    break;
-                }
-            }
+        // Simulate price path
+        for (size_t step = 0; step < num_steps; ++step) {
+            double z = normal(engine);
+            St *= std::exp((r - 0.5 * sigma * sigma) * dt + sigma * std::sqrt(dt) * z);
         }
         
-        // Calculate the payoff based on the option style
+        // Calculate payoff
         double payoff = 0.0;
-        
-        if (style == OptionStyle::EUROPEAN || 
-            (style == OptionStyle::AMERICAN && S_t == S_t) || // If we didn't break early
-            (style == OptionStyle::BARRIER && !barrier_hit)) {
-            payoff = payoff_func(S_t, K, type);
-        } else if (style == OptionStyle::ASIAN) {
-            double avg_price = sum_prices / num_steps;
-            payoff = payoff_func(avg_price, K, type);
+        if (type == OptionType::CALL) {
+            payoff = std::max(St - K, 0.0);
+        } else {
+            payoff = std::max(K - St, 0.0);
         }
         
-        sum_payoffs += payoff * std::exp(-r * T);
+        sum_payoffs += payoff;
     }
     
-    return sum_payoffs / num_simulations;
-}
-
-double MonteCarlo::price(double S, double K, double r, double sigma, double T, OptionType type) const {
-    return price(S, K, r, sigma, T, type, OptionStyle::EUROPEAN, nullptr);
+    return std::exp(-r * T) * (sum_payoffs / num_paths);
 }
 
 double MonteCarlo::delta(double S, double K, double r, double sigma, double T, OptionType type) const {
@@ -367,8 +324,8 @@ double MonteCarlo::delta(double S, double K, double r, double sigma, double T, O
     }
     
     double h = 0.01 * S; // Small change in stock price
-    double price_plus = price(S + h, K, r, sigma, T, type, OptionStyle::AMERICAN);
-    double price_minus = price(S - h, K, r, sigma, T, type, OptionStyle::AMERICAN);
+    double price_plus = price(S + h, K, r, sigma, T, type);
+    double price_minus = price(S - h, K, r, sigma, T, type);
     
     return (price_plus - price_minus) / (2 * h);
 }
@@ -379,9 +336,9 @@ double MonteCarlo::gamma(double S, double K, double r, double sigma, double T, O
     }
     
     double h = 0.01 * S; // Small change in stock price
-    double price_plus = price(S + h, K, r, sigma, T, type, OptionStyle::AMERICAN);
-    double price_center = price(S, K, r, sigma, T, type, OptionStyle::AMERICAN);
-    double price_minus = price(S - h, K, r, sigma, T, type, OptionStyle::AMERICAN);
+    double price_plus = price(S + h, K, r, sigma, T, type);
+    double price_center = price(S, K, r, sigma, T, type);
+    double price_minus = price(S - h, K, r, sigma, T, type);
     
     return (price_plus - 2 * price_center + price_minus) / (h * h);
 }
@@ -392,8 +349,8 @@ double MonteCarlo::theta(double S, double K, double r, double sigma, double T, O
     }
     
     double h = 0.01; // Small change in time (in years)
-    double price_now = price(S, K, r, sigma, T, type, OptionStyle::AMERICAN);
-    double price_later = price(S, K, r, sigma, T - h, type, OptionStyle::AMERICAN);
+    double price_now = price(S, K, r, sigma, T, type);
+    double price_later = price(S, K, r, sigma, T - h, type);
     
     return (price_later - price_now) / h;
 }
@@ -404,8 +361,8 @@ double MonteCarlo::vega(double S, double K, double r, double sigma, double T, Op
     }
     
     double h = 0.01; // Small change in volatility
-    double price_high = price(S, K, r, sigma + h, T, type, OptionStyle::AMERICAN);
-    double price_low = price(S, K, r, sigma - h, T, type, OptionStyle::AMERICAN);
+    double price_high = price(S, K, r, sigma + h, T, type);
+    double price_low = price(S, K, r, sigma - h, T, type);
     
     return (price_high - price_low) / (2 * h) / 100.0; // Divided by 100 to get the change per 1% change in volatility
 }
@@ -416,8 +373,8 @@ double MonteCarlo::rho(double S, double K, double r, double sigma, double T, Opt
     }
     
     double h = 0.01; // Small change in interest rate
-    double price_high = price(S, K, r + h, sigma, T, type, OptionStyle::AMERICAN);
-    double price_low = price(S, K, r - h, sigma, T, type, OptionStyle::AMERICAN);
+    double price_high = price(S, K, r + h, sigma, T, type);
+    double price_low = price(S, K, r - h, sigma, T, type);
     
     return (price_high - price_low) / (2 * h) / 100.0; // Divided by 100 to get the change per 1% change in interest rate
 }
