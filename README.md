@@ -25,7 +25,7 @@ The library provides tools to:
 ### Neural Network Architectures
 
 - **LSTM**: For time series prediction of financial data
-- **CNN**: For pattern recognition in volatility surfaces
+- **CNN**: For pattern recognition 
 - **Hybrid Models**: Combining convolutional layers for spatial features with LSTM layers for temporal dynamics
 
 ### Options Pricing
